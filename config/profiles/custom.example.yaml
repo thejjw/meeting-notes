@@ -1,0 +1,13 @@
+# Custom profile example — override any setting
+# No hidden assumptions; every value is visible.
+
+runtime:
+  device: cpu
+  asr_backend: whisper_cpp
+
+asr:
+  model: small
+  backend_options:
+    whisper_cpp:
+      model_variant: q5_0
+      extra_args: ["--threads", "4"]

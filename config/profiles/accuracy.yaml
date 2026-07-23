@@ -1,0 +1,15 @@
+# Accuracy profile — highest quality transcription
+
+runtime:
+  device: cpu
+  asr_backend: whisper_cpp
+
+asr:
+  model: large-v3
+  beam_size: 5
+  best_of: 5
+  condition_on_previous_text: true
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
+      flash_attention: true

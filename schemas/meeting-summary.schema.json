@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meeting Summary",
+  "description": "Structured meeting minutes generated from a transcript.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title", "short_title", "meeting_date", "participants", "agenda", "executive_summary", "discussion_topics", "decisions", "action_items", "open_questions", "risks", "notable_dates_and_numbers", "transcription_uncertainties"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Full meeting title."
+    },
+    "short_title": {
+      "type": "string",
+      "description": "Concise 2-8 word topic description for filenames.",
+      "maxLength": 48
+    },
+    "meeting_date": {
+      "type": ["string", "null"],
+      "description": "Meeting date in YYYY-MM-DD format, or null."
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name", "role", "evidence"],
+        "properties": {
+          "name": { "type": "string" },
+          "role": { "type": ["string", "null"] },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "agenda": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "executive_summary": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "discussion_topics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["topic", "time_range", "summary", "evidence"],
+        "properties": {
+          "topic": { "type": "string" },
+          "time_range": { "type": "string", "description": "Time span like '00:00 ~ 05:30'" },
+          "summary": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "status", "evidence", "timestamps"],
+        "properties": {
+          "decision": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["confirmed", "provisional"]
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "timestamps": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task", "owner", "due_date", "status", "confidence", "evidence", "timestamps"],
+        "properties": {
+          "task": { "type": "string" },
+          "owner": { "type": ["string", "null"] },
+          "due_date": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["open"] },
+          "confidence": {
+            "type": "string",
+            "enum": ["high", "medium", "low"]
+          },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "timestamps": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "open_questions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["question", "evidence"],
+        "properties": {
+          "question": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["risk", "impact", "mitigation", "evidence"],
+        "properties": {
+          "risk": { "type": "string" },
+          "impact": { "type": ["string", "null"] },
+          "mitigation": { "type": ["string", "null"] },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "notable_dates_and_numbers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["value", "meaning", "evidence"],
+        "properties": {
+          "value": { "type": "string" },
+          "meaning": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "transcription_uncertainties": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["description", "evidence"],
+        "properties": {
+          "description": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

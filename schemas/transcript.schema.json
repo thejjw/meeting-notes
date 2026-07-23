@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Transcript",
+  "description": "Normalized transcript output from ASR.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metadata", "segments"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_file": { "type": "string" },
+        "duration_seconds": { "type": "number" },
+        "language": { "type": "string" },
+        "task": { "type": "string" },
+        "backend": { "type": "string" },
+        "model": { "type": "string" },
+        "device": { "type": "string" },
+        "processed_at": { "type": "string" }
+      }
+    },
+    "segments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "start", "end", "text"],
+        "properties": {
+          "id": { "type": "string" },
+          "start": { "type": "number" },
+          "end": { "type": "number" },
+          "text": { "type": "string" },
+          "language": { "type": ["string", "null"] },
+          "speaker": { "type": ["string", "null"] },
+          "confidence": { "type": ["number", "null"] },
+          "metrics": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "avg_logprob": { "type": ["number", "null"] },
+              "no_speech_prob": { "type": ["number", "null"] },
+              "compression_ratio": { "type": ["number", "null"] }
+            }
+          },
+          "source": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "backend": { "type": "string" },
+              "model": { "type": "string" },
+              "chunk_id": { "type": ["string", "null"] },
+              "raw_segment_index": { "type": ["integer", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

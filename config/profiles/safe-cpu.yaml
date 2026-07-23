@@ -1,0 +1,17 @@
+# Safe CPU profile — the default
+# whisper.cpp CPU build, conservative settings, no GPU dependency.
+
+runtime:
+  device: cpu
+  asr_backend: whisper_cpp
+  threads: 0
+  max_auto_threads: 8
+  reserve_logical_cores: 2
+  allow_fallback: false
+
+asr:
+  model: medium
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
+      flash_attention: true

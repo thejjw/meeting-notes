@@ -1,0 +1,57 @@
+# Benchmark matrix — compare Whisper backend/model configurations.
+
+runs:
+  - name: safe-cpu-medium
+    runtime:
+      asr_backend: whisper_cpp
+      device: cpu
+    asr:
+      model: medium
+      backend_options:
+        whisper_cpp:
+          model_variant: fp16
+
+  - name: cpu-small
+    runtime:
+      asr_backend: whisper_cpp
+      device: cpu
+    asr:
+      model: small
+      backend_options:
+        whisper_cpp:
+          model_variant: fp16
+
+  - name: amd-hip-large-v3-fp16
+    runtime:
+      asr_backend: whisper_cpp
+      device: rocm
+    asr:
+      model: large-v3
+      backend_options:
+        whisper_cpp:
+          model_variant: fp16
+          hip_arch: gfx1151
+
+  - name: amd-vulkan-large-v3
+    runtime:
+      asr_backend: whisper_cpp
+      device: vulkan
+    asr:
+      model: large-v3
+
+  - name: amd-vulkan-turbo
+    runtime:
+      asr_backend: whisper_cpp
+      device: vulkan
+    asr:
+      model: large-v3-turbo
+
+  - name: cpu-quantized
+    runtime:
+      asr_backend: whisper_cpp
+      device: cpu
+    asr:
+      model: large-v3-turbo
+      backend_options:
+        whisper_cpp:
+          model_variant: q5_0

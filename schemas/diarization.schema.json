@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Diarization",
+  "description": "Normalized diarization output.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["metadata", "turns"],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "source_file": { "type": "string" },
+        "duration_seconds": { "type": "number" },
+        "backend": { "type": "string" },
+        "model": { "type": "string" },
+        "device": { "type": "string" },
+        "processed_at": { "type": "string" }
+      }
+    },
+    "turns": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["turn_id", "start", "end", "speaker"],
+        "properties": {
+          "turn_id": { "type": "string" },
+          "start": { "type": "number" },
+          "end": { "type": "number" },
+          "speaker": { "type": "string" },
+          "confidence": { "type": ["number", "null"] },
+          "source": { "type": "string" }
+        }
+      }
+    }
+  }
+}

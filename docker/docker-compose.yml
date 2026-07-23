@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  whisper-cpp:
+    build:
+      context: ./docker/whisper-cpp
+      dockerfile: Dockerfile
+    image: meeting-notes-whisper-cpp
+    volumes:
+      - ../models:/models
+    entrypoint: ["/usr/local/bin/whisper-cli"]
+    command: ["--help"]
+
+  # Example: Run transcription
+  # docker-compose run whisper-cpp -m /models/ggml-large-v3-turbo.bin -f /data/audio.wav -l ko -oj

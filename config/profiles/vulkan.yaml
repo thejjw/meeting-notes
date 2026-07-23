@@ -1,0 +1,12 @@
+# Vulkan profile — cross-vendor GPU acceleration
+
+runtime:
+  device: vulkan
+  asr_backend: whisper_cpp
+
+asr:
+  model: large-v3
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
+      flash_attention: true

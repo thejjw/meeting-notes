@@ -1,0 +1,11 @@
+# NVIDIA CUDA profile
+
+runtime:
+  device: cuda
+  asr_backend: whisper_cpp
+
+asr:
+  model: large-v3
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16

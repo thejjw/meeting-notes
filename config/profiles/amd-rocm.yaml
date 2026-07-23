@@ -1,0 +1,12 @@
+# AMD ROCm/HIP profile
+
+runtime:
+  device: rocm
+  asr_backend: whisper_cpp
+
+asr:
+  model: large-v3
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
+      hip_arch: gfx1151

@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# uv
+uv.lock
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Models (large binaries, never commit)
+cache/models/
+*.bin
+*.gguf
+*.pt
+*.onnx
+
+# Secrets and tokens
+.env
+.env.*
+*.token
+HF_TOKEN
+
+# whisper.cpp binaries (downloaded, not committed)
+bin/
+
+# Generated artifacts (per-job data)
+data/meetings/
+data/benchmarks/
+*.log
+
+# Temp files
+*.tmp
+*.temp
+
+# Meeting notes config (user-specific)
+meeting-notes.yaml
+!config/meeting-notes.example.yaml
+
+# Generated benchmark configs (keep only .example)
+config/benchmark-matrix.yaml
+config/benchmark-quick.yaml

@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meeting Chunk Summary",
+  "description": "Summary of a single chunk from a longer meeting transcript.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["chunk_id", "summary"],
+  "properties": {
+    "chunk_id": {
+      "type": "string",
+      "description": "Identifier of the chunk (e.g. chunk-0001)."
+    },
+    "segment_range": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "first_segment_id": { "type": "string" },
+        "last_segment_id": { "type": "string" }
+      }
+    },
+    "summary": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Key points from this chunk."
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["decision", "status"],
+        "properties": {
+          "decision": { "type": "string" },
+          "status": { "type": "string", "enum": ["confirmed", "provisional"] },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "action_items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["task", "status", "confidence"],
+        "properties": {
+          "task": { "type": "string" },
+          "owner": { "type": ["string", "null"] },
+          "due_date": { "type": ["string", "null"] },
+          "status": { "type": "string", "enum": ["open"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}

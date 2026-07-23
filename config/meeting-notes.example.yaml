@@ -1,0 +1,216 @@
+# meeting-notes example configuration
+# Copy this file to meeting-notes.yaml and customize.
+
+version: 1
+
+setup:
+  completed: true
+  profile: safe-cpu
+  created_at: null
+  created_by_version: "0.1.0"
+  resource_catalog_version: 1
+
+project:
+  data_dir: ./data
+  cache_dir: ./cache
+  temp_dir: null
+  copy_source_into_job: true
+  keep_intermediates: true
+  resume: true
+  overwrite: false
+  log_level: INFO
+
+runtime:
+  platform: auto
+  device: cpu
+  asr_backend: whisper_cpp
+  ffmpeg_path: ffmpeg
+  ffprobe_path: ffprobe
+  whisper_cpp_path: whisper-cli
+  python_executable: null
+  threads: 0
+  max_auto_threads: 8
+  reserve_logical_cores: 2
+  workers: 1
+  process_priority: normal
+  allow_fallback: false
+  environment_overrides: {}
+
+resources:
+  catalog_path: ./config/resource-catalog.yaml
+  prefer_local_measurements: true
+  cpu_system_headroom_gb: 2.0
+  gpu_headroom_ratio: 0.35
+  large_download_confirmation_mib: 1024
+  warn_below_recommended: true
+  allow_unknown_estimates: true
+
+audio:
+  output_sample_rate: 16000
+  output_channels: 1
+  output_codec: pcm_s16le
+  preserve_original: true
+  normalize:
+    enabled: true
+    highpass_hz: null
+    lowpass_hz: null
+    loudnorm:
+      enabled: false
+      integrated_lufs: -20.0
+      loudness_range: 11.0
+      true_peak_db: -2.0
+    extra_filters: []
+  chunking:
+    mode: auto
+    trigger_duration_minutes: 45
+    max_chunk_minutes: 20
+    overlap_seconds: 2.0
+    split_on_silence: true
+    minimum_silence_seconds: 0.5
+
+vad:
+  enabled: true
+  backend: backend_native
+  model_path: null
+  threshold: 0.50
+  min_speech_ms: 250
+  min_silence_ms: 500
+  speech_pad_ms: 200
+  max_speech_seconds: 900
+
+asr:
+  model: medium
+  model_path: null
+  model_cache_dir: ./cache/models
+  language: ko
+  task: transcribe
+  initial_prompt: null
+  glossary_path: ./config/glossary.yaml
+  beam_size: 5
+  best_of: 5
+  temperature: 0.0
+  condition_on_previous_text: true
+  word_timestamps: false
+  suppress_blank: true
+  no_speech_threshold: 0.60
+  logprob_threshold: -1.0
+  compression_ratio_threshold: 2.4
+  output_formats:
+    - json
+    - md
+    - srt
+    - vtt
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
+      hip_arch: null
+      gpu_device: null
+      flash_attention: true
+      extra_args: []
+    openai_whisper:
+      torch_device: auto
+      fp16: true
+      extra_options: {}
+    faster_whisper:
+      device: auto
+      compute_type: auto
+      cpu_threads: 0
+      batch_size: 1
+      extra_options: {}
+
+diarization:
+  enabled: true
+  backend: pyannote
+  model: pyannote/speaker-diarization-community-1
+  model_path: null
+  token_env: HF_TOKEN
+  device: auto
+  num_speakers: null
+  min_speakers: 2
+  max_speakers: 8
+  use_exclusive_diarization: true
+  assignment_method: maximum_overlap
+  minimum_overlap_ratio: 0.15
+  nearest_tolerance_seconds: 1.0
+  unknown_speaker_label: UNKNOWN
+  speaker_map_path: null
+  write_rttm: true
+
+glossary:
+  enabled: true
+  path: ./config/glossary.yaml
+  use_asr_initial_prompt: true
+  conservative_post_replace: true
+  case_sensitive: false
+  record_corrections: true
+
+summarization:
+  enabled: true
+  backend: codex_cli
+  source_transcript: merged
+  prompt_path: ./prompts/meeting-summary.md
+  chunk_prompt_path: ./prompts/meeting-chunk-summary.md
+  output_schema_path: ./schemas/meeting-summary.schema.json
+  chunk_schema_path: ./schemas/meeting-chunk-summary.schema.json
+  language: ko
+  max_single_pass_characters: 120000
+  chunk_target_characters: 60000
+  chunk_overlap_segments: 2
+  retries: 2
+  timeout_seconds: 1800
+  codex:
+    executable: codex
+    model: null
+    reasoning_effort: null
+    ephemeral: true
+    skip_git_repo_check: true
+    ignore_user_config: false
+    ignore_rules: false
+    extra_args: []
+  local_command:
+    command: []
+    environment: {}
+
+naming:
+  enabled: true
+  recording_mode: managed_copy
+  finalize_after_summary: true
+  allow_without_summary: false
+  date_source_order:
+    - summary_meeting_date
+    - media_creation_time
+    - source_mtime
+    - processing_date
+  recording_template: "{date}_{short_title}{extension}"
+  minutes_template: "{date}_{short_title}_meeting-notes.md"
+  json_export_template: "{date}_{short_title}_meeting-notes.json"
+  preserve_unicode: true
+  whitespace_replacement: "-"
+  max_short_title_characters: 48
+  max_filename_characters: 180
+  collision_policy: increment
+  copy_method: auto
+  preview_before_apply: true
+
+render:
+  title_template: "{date} {title}"
+  timestamp_format: HH:MM:SS
+  include_executive_summary: true
+  include_participants: true
+  include_agenda: true
+  include_decisions: true
+  include_action_items: true
+  include_open_questions: true
+  include_risks: true
+  include_evidence_links: true
+  include_full_transcript_link: true
+  unknown_value_text: 미정
+  output_markdown: true
+
+benchmark:
+  warmup_runs: 0
+  repeat_runs: 1
+  collect_peak_memory: true
+  collect_gpu_metrics: true
+  reference_transcript: null
+  language_for_scoring: ko

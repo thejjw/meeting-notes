@@ -1,0 +1,7 @@
+# Speaker mapping — rename anonymous diarization labels to real names.
+# Apply as a post-diarization stage; no rerun needed.
+
+SPEAKER_00: 홍길동
+SPEAKER_01: 이광수
+SPEAKER_02: 김영수
+SPEAKER_03: 박지현

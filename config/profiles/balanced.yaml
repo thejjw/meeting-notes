@@ -1,0 +1,11 @@
+# Balanced profile — good accuracy and speed
+
+runtime:
+  device: cpu
+  asr_backend: whisper_cpp
+
+asr:
+  model: large-v3-turbo
+  backend_options:
+    whisper_cpp:
+      model_variant: fp16
