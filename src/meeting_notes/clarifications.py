@@ -73,27 +73,33 @@ def _item_id(index: int) -> str:
     return f"clarif-{index:03d}"
 
 
-def _read_answers(path: Path) -> dict[str, str]:
+def _read_existing(path: Path) -> tuple[dict[str, str], list[str]]:
+    """Read answers and general comments already typed into a sidecar file."""
     try:
         value = yaml.safe_load(path.read_text(encoding="utf-8"))
     except (OSError, yaml.YAMLError) as error:
         raise ClarificationError(f"Malformed clarifications file {path}: {error}") from error
     if not isinstance(value, dict):
-        return {}
+        return {}, []
     items = value.get("clarifications", {})
-    if not isinstance(items, dict):
-        return {}
     answers: dict[str, str] = {}
-    for item_id, entry in items.items():
-        if isinstance(entry, dict):
-            answer = entry.get("answer", "")
-            if answer:
-                answers[str(item_id)] = str(answer).strip()
-    return answers
+    if isinstance(items, dict):
+        for item_id, entry in items.items():
+            if isinstance(entry, dict):
+                answer = entry.get("answer", "")
+                if answer:
+                    answers[str(item_id)] = str(answer).strip()
+    raw_comments = value.get("comments", [])
+    comments: list[str] = []
+    if isinstance(raw_comments, list):
+        comments = [str(c).strip() for c in raw_comments if str(c).strip()]
+    return answers, comments
 
 
 def build_template(
-    job_dir: Path, preserved_answers: dict[str, str] | None = None
+    job_dir: Path,
+    preserved_answers: dict[str, str] | None = None,
+    preserved_comments: list[str] | None = None,
 ) -> dict[str, Any]:
     """Build a clarifications template dict from the current summary's open questions."""
     _, summary = _summary(job_dir)
@@ -116,6 +122,10 @@ def build_template(
         "job_id": job_dir.name,
         "transcript_sha256": file_sha256(transcript_path),
         "clarifications": items,
+        # General notes not tied to a specific flagged item -- steers the
+        # re-summarization LLM without touching deterministic glossary
+        # substitution. Duplicate the entry to add more.
+        "comments": list(preserved_comments) if preserved_comments else [""],
     }
 
 
@@ -127,8 +137,9 @@ def write_template(
 ) -> tuple[Path | None, str | None]:
     """Write (or refresh) the editable clarifications sidecar file.
 
-    Returns (path, warning). Never overwrites answers a user may have already
-    typed unless the existing file is stale for the current transcript.
+    Returns (path, warning). Never overwrites answers or comments a user may
+    have already typed unless the existing file is stale for the current
+    transcript.
     """
     output = output or job_dir / "clarifications.yaml"
     _, summary = _summary(job_dir)
@@ -152,23 +163,24 @@ def write_template(
         return output, None
 
     answers: dict[str, str] = {}
+    comments: list[str] = []
     if output.exists():
-        answers = _read_answers(output)
+        answers, comments = _read_existing(output)
         backup = output.with_name(
             f"{output.name}.bak-{datetime.now(UTC).strftime('%Y%m%dT%H%M%SZ')}"
         )
         shutil.copy2(output, backup)
-    template = build_template(job_dir, answers)
+    template = build_template(job_dir, answers, comments)
     atomic_write_text(output, yaml.safe_dump(template, allow_unicode=True, sort_keys=False))
     return output, None
 
 
 def load_answers(
     job_dir: Path, path: Path
-) -> tuple[dict[str, dict[str, Any]], dict[str, Any], str]:
+) -> tuple[dict[str, dict[str, Any]], list[str], dict[str, Any], str]:
     """Load and validate an answered clarifications file.
 
-    Returns (items_by_id, summary, transcript_sha256).
+    Returns (items_by_id, comments, summary, transcript_sha256).
     """
     transcript_path, _ = _transcript(job_dir)
     _, summary = _summary(job_dir)
@@ -196,7 +208,11 @@ def load_answers(
     items = document.get("clarifications", {})
     if not isinstance(items, dict):
         raise ClarificationError("The 'clarifications' value must be a mapping.")
-    return items, summary, actual_hash
+    raw_comments = document.get("comments", [])
+    if not isinstance(raw_comments, list):
+        raise ClarificationError("The 'comments' value must be a list.")
+    comments = [str(c).strip() for c in raw_comments if str(c).strip()]
+    return items, comments, summary, actual_hash
 
 
 def _apply_report_stages() -> dict[str, dict[str, str]]:
@@ -228,15 +244,15 @@ def apply_clarifications(
             f"Clarifications file not found: {answers_path}. Run "
             "`meeting-notes clarify template JOB_DIR` first."
         )
-    items, summary, transcript_hash = load_answers(job_dir, answers_path)
+    items, comments, summary, transcript_hash = load_answers(job_dir, answers_path)
 
     answered = {
         item_id: entry
         for item_id, entry in items.items()
         if isinstance(entry, dict) and str(entry.get("answer") or "").strip()
     }
-    if not answered:
-        raise ClarificationError("No answers found in clarifications file.")
+    if not answered and not comments:
+        raise ClarificationError("No answers or comments found in clarifications file.")
 
     clarifications = list(summary.get("user_clarifications") or [])
     context_lines: list[str] = []
@@ -259,7 +275,7 @@ def apply_clarifications(
         if category in _GLOSSARY_CATEGORIES and heard_text:
             glossary_updates.append((answer, heard_text))
 
-    if applied_count == 0:
+    if answered and applied_count == 0:
         raise ClarificationError(
             "Answers did not match any pending clarification. The clarifications "
             "file may be for a different summary; run `clarify template --force`."
@@ -299,12 +315,20 @@ def apply_clarifications(
         render_dir = staging / ".render"
         transcript_paths = render_transcript_variants(transcript_data, render_dir)
 
-        extra_context = (
-            "The following corrections were confirmed by a human reviewer after "
-            "reviewing the transcript and are authoritative over the raw transcript "
-            "wording, including for terms that were not literally substituted:\n"
-            + "\n".join(context_lines)
-        )
+        context_sections: list[str] = []
+        if context_lines:
+            context_sections.append(
+                "The following corrections were confirmed by a human reviewer after "
+                "reviewing the transcript and are authoritative over the raw transcript "
+                "wording, including for terms that were not literally substituted:\n"
+                + "\n".join(context_lines)
+            )
+        if comments:
+            context_sections.append(
+                "Additional reviewer notes (general guidance, not tied to a specific "
+                "flagged item):\n" + "\n".join(f"- {c}" for c in comments)
+            )
+        extra_context = "\n\n".join(context_sections)
         from meeting_notes.pipeline import _summarize_transcript
 
         updated_summary = _summarize_transcript(
@@ -378,6 +402,7 @@ def apply_clarifications(
                 f"Applied {applied_count} clarification answer(s).",
                 f"Added {len(glossary_updates)} term(s) to {job_glossary_path.name}.",
                 f"Corrected {len(corrections)} transcript occurrence(s) via glossary substitution.",
+                f"Included {len(comments)} reviewer note(s).",
             ],
             stages=_apply_report_stages(),
             asr_activity="not run (reused transcript)",
@@ -426,6 +451,7 @@ def apply_clarifications(
         "transcript_sha256": transcript_hash,
         "applied_count": applied_count,
         "glossary_terms_added": len(glossary_updates),
+        "comment_count": len(comments),
         "managed_paths": managed,
         "external_paths": [],
         "date_source": date_source,
@@ -437,8 +463,9 @@ def apply_clarifications(
     }
     save_manifest(job_dir, manifest)
 
+    note_suffix = f" and {len(comments)} note(s)" if comments else ""
     console.print(
-        f"[green]Applied {applied_count} clarification answer(s); "
+        f"[green]Applied {applied_count} clarification answer(s){note_suffix}; "
         f"published generation {generation_id}.[/green]"
     )
     return generation_record

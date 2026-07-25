@@ -136,7 +136,7 @@ Automatic Speech Recognition (ASR) may mishear technical terms or leave action i
    ```bash
    uv run meeting-notes clarify template JOB_DIR
    ```
-   This writes `JOB_DIR/clarifications.yaml` with one entry per open question, e.g.:
+   This writes `JOB_DIR/clarifications.yaml` with one entry per open question, plus a `comments:` section, e.g.:
    ```yaml
    clarifications:
      clarif-000:
@@ -151,6 +151,8 @@ Automatic Speech Recognition (ASR) may mishear technical terms or leave action i
        question: "OAuth 전환 작업" 담당자가 미정입니다.
        evidence: [seg-000045]
        answer: ''
+   comments:
+     - ''
    ```
 
 2. **Fill in the `answer:` fields** and apply:
@@ -158,10 +160,12 @@ Automatic Speech Recognition (ASR) may mishear technical terms or leave action i
    uv run meeting-notes clarify apply JOB_DIR
    ```
 
+   For general guidance that isn't tied to one flagged item — a hint, a preference, a "when unsure, assume X" — add free-text lines under `comments:` instead (duplicate the entry to add more). Unlike an `answer:`, a comment is never used for exact-match glossary substitution; it's passed to the re-summarization model as steering context only. Comments are preserved across `clarify template --force` regenerations, same as answers.
+
 ### What Happens:
-- **Job-scoped glossary**: `asr_correction`/`term_clarification` answers (e.g. `아르고 시디` -> `ArgoCD`) are saved to `JOB_DIR/glossary.yaml`, scoped to this recording only — not the shared global glossary. `missing_info` answers (owners, dates) are never added to any glossary.
+- **Job-scoped glossary**: `asr_correction`/`term_clarification` answers (e.g. `아르고 시디` -> `ArgoCD`) are saved to `JOB_DIR/glossary.yaml`, scoped to this recording only — not the shared global glossary. `missing_info` answers (owners, dates) are never added to any glossary. `comments:` entries are never added to any glossary.
 - **Transcript correction**: the job glossary, layered over the global one, is re-applied to `transcript/transcript.merged.json` and its exported `.md`/`.srt`/`.vtt` variants. Only literal (non-inflected) occurrences of the misheard text are substituted; Korean particle-suffixed occurrences may remain in the raw transcript even after this step.
-- **Re-summarization**: the AI summarizer is re-run with the confirmed answers passed as authoritative context, so the regenerated summary reflects correct terminology even where the literal substitution above didn't apply.
+- **Re-summarization**: the AI summarizer is re-run with the confirmed answers, plus any `comments:`, passed as authoritative/steering context, so the regenerated summary reflects correct terminology even where the literal substitution above didn't apply.
 - **New generation published**: results land in a new `output/finalized/<generation>/` directory; the previous generation is marked superseded in `manifest.json`, never overwritten in place.
 - **Global promotion (optional)**: once a term proves useful across meetings, promote it explicitly:
   ```bash

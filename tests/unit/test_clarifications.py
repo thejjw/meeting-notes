@@ -96,6 +96,12 @@ def _answer(job: Path, path: Path, answers: dict[str, str]) -> None:
     path.write_text(yaml.safe_dump(document, allow_unicode=True), encoding="utf-8")
 
 
+def _comment(job: Path, path: Path, comments: list[str]) -> None:
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    document["comments"] = comments
+    path.write_text(yaml.safe_dump(document, allow_unicode=True), encoding="utf-8")
+
+
 class TestWriteTemplate:
     def test_builds_one_entry_per_open_clarification(self, tmp_path: Path) -> None:
         job = _job(tmp_path)
@@ -107,6 +113,7 @@ class TestWriteTemplate:
         assert set(document["clarifications"]) == {"clarif-000", "clarif-001"}
         assert document["clarifications"]["clarif-000"]["heard_text"] == "아르고 시디"
         assert document["clarifications"]["clarif-000"]["answer"] == ""
+        assert document["comments"] == [""]
 
     def test_no_clarifications_returns_none(self, tmp_path: Path) -> None:
         job = _job(tmp_path)
@@ -128,6 +135,15 @@ class TestWriteTemplate:
         regenerated = yaml.safe_load(path.read_text(encoding="utf-8"))
         assert regenerated["clarifications"]["clarif-000"]["answer"] == "ArgoCD"
         assert list(job.glob("clarifications.yaml.bak-*"))
+
+    def test_regenerating_preserves_typed_comments(self, tmp_path: Path) -> None:
+        job = _job(tmp_path)
+        path, _ = write_template(job)
+        _comment(job, path, ["Prefer expanding acronyms on first use.", ""])
+
+        write_template(job, force=True)
+        regenerated = yaml.safe_load(path.read_text(encoding="utf-8"))
+        assert regenerated["comments"] == ["Prefer expanding acronyms on first use."]
 
 
 class TestLoadAnswers:
@@ -279,6 +295,51 @@ class TestApplyClarifications:
     def test_no_answers_raises(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         job = _job(tmp_path)
         path, _ = write_template(job)
+        capture: dict = {}
+        self._patch_summarizer(monkeypatch, capture)
+
+        with pytest.raises(ClarificationError, match="No answers"):
+            apply_clarifications(job, path, _config(tmp_path))
+
+    def test_comment_only_run_reaches_summarizer_without_answers(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job = _job(tmp_path)
+        path, _ = write_template(job)
+        _comment(job, path, ["When unsure about a name, prefer the romanized spelling."])
+        capture: dict = {}
+        self._patch_summarizer(monkeypatch, capture)
+
+        record = apply_clarifications(job, path, _config(tmp_path))
+
+        assert record["applied_count"] == 0
+        assert record["comment_count"] == 1
+        assert "romanized spelling" in capture["extra_context"]
+        assert "reviewer notes" in capture["extra_context"]
+        # no item was answered, so no glossary term should be written
+        assert not (job / "glossary.yaml").exists()
+
+    def test_comments_accompany_answers_in_extra_context(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job = _job(tmp_path)
+        path, _ = write_template(job)
+        _answer(job, path, {"clarif-000": "ArgoCD"})
+        _comment(job, path, ["Treat all Kubernetes references as ArgoCD-managed."])
+        capture: dict = {}
+        self._patch_summarizer(monkeypatch, capture)
+
+        apply_clarifications(job, path, _config(tmp_path))
+
+        assert "ArgoCD" in capture["extra_context"]
+        assert "ArgoCD-managed" in capture["extra_context"]
+
+    def test_whitespace_only_comments_are_ignored(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        job = _job(tmp_path)
+        path, _ = write_template(job)
+        _comment(job, path, ["", "   "])
         capture: dict = {}
         self._patch_summarizer(monkeypatch, capture)
 
