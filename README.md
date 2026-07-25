@@ -2,6 +2,16 @@
 
 Local-first Korean/English meeting notes with Whisper transcription.
 
+## Prerequisites
+
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) must be
+  installed and available on `PATH`. Verify it with `uv --version`. The project
+  uses `uv` to install and run its required Python 3.12 environment.
+- FFmpeg and FFprobe must be available. The configuration wizard and
+  `meeting-notes doctor` report whether they were detected.
+- The model-transfer scripts described below target Windows PowerShell. They do
+  not require administrator privileges.
+
 ## What It Does
 
 Takes a recorded meeting audio/video file and produces:
@@ -385,6 +395,47 @@ An already-downloaded pyannote pipeline can instead be selected with
 `diarization.model_path`; in that mode the application does not require
 `HF_TOKEN`. Obtaining the official Community-1 files initially still requires
 accepting the model's conditions.
+
+## Transferring Models Between Windows Computers
+
+The Windows transfer scripts create portable ZIP64 archives for large or gated
+models. Archives contain model files and sanitized provenance only. They never
+contain Hugging Face credentials, meeting data, user configuration, FFmpeg,
+Python environments, or whisper.cpp runtime executables.
+
+On the source computer, back up the configured Whisper model and diarization
+pipeline:
+
+```powershell
+.\scripts\transfer-whisper-model-windows.ps1 -Action Backup
+.\scripts\transfer-diarization-model-windows.ps1 -Action Backup
+```
+
+Use `-Model large-v3-turbo` to select a different installed managed Whisper
+model, `-Archive C:\Backups\model.zip` to choose the output, or
+`-CompressionLevel Fastest` for a faster but larger archive. Each backup writes
+both a `.zip` and adjacent `.zip.sha256` file. Carry both files to the new
+computer.
+
+On the destination computer, install `uv`, clone the project, create or copy a
+valid meeting-notes configuration, and restore:
+
+```powershell
+uv sync --extra diarization
+.\scripts\transfer-whisper-model-windows.ps1 -Action Restore -Archive D:\Transfer\meeting-notes-whisper-model.zip
+.\scripts\transfer-diarization-model-windows.ps1 -Action Restore -Archive D:\Transfer\meeting-notes-diarization-model.zip
+uv run meeting-notes doctor
+```
+
+Pass `-Config PATH` when the configuration is not at the normal per-user
+location. Restore refuses to replace an installed destination unless `-Force`
+is supplied. The Whisper model archive does not include whisper.cpp itself; use
+`meeting-notes runtime install` or the configuration wizard to provision the
+appropriate CPU or GPU runtime separately.
+
+Checksums detect transfer corruption but are not signatures. Only restore
+archives obtained from a trusted source. Hugging Face gated-model conditions
+and all other model licenses continue to apply when archives are copied.
 
 ## whisper.cpp Setup
 

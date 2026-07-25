@@ -411,6 +411,11 @@ def _resolve_config_path(explicit: str | None = None) -> Path | None:
     return None
 
 
+def resolve_config_path(explicit: str | None = None) -> Path | None:
+    """Return the active configuration path without loading its contents."""
+    return _resolve_config_path(explicit)
+
+
 def load_config(explicit_path: str | None = None) -> MeetingNotesConfig:
     """Load and validate configuration from the discovery order.
 
