@@ -50,6 +50,21 @@ class TestCLIBasic:
         result = runner.invoke(app, ["summarizers", "test", "--help"])
         assert result.exit_code == 0
 
+    def test_clarify_help(self) -> None:
+        result = runner.invoke(app, ["clarify", "--help"])
+        assert result.exit_code == 0
+        assert "template" in result.output
+        assert "apply" in result.output
+
+    def test_glossary_help(self) -> None:
+        result = runner.invoke(app, ["glossary", "--help"])
+        assert result.exit_code == 0
+        assert "promote" in result.output
+
+    def test_feedback_command_removed(self) -> None:
+        result = runner.invoke(app, ["feedback", "--help"])
+        assert result.exit_code != 0
+
 
 class TestCLIConfigCommands:
     """Test config subcommands."""

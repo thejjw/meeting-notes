@@ -2,6 +2,32 @@
 
 All notable changes to meeting-notes will be documented in this file.
 
+## [Unreleased]
+
+### Added
+- `meeting-notes clarify template` / `clarify apply` - review AI-generated clarification
+  questions (ASR mishearings, missing owners/dates, ambiguous terms) via an editable
+  `clarifications.yaml` sidecar, then apply confirmed answers: correct the per-job
+  glossary and transcript, re-summarize with the answers as authoritative context, and
+  publish a new output generation.
+- `meeting-notes glossary promote` - explicitly promote a job's glossary terms into the
+  global glossary.
+- Per-job glossary scoping (`<job_dir>/glossary.yaml`), layered over the global glossary
+  at merge time, so corrections from one recording don't silently affect unrelated
+  meetings.
+- `user_clarifications` schema/prompt/render fields: `heard_text`, `user_answer`,
+  `resolved`.
+
+### Changed
+- Glossary matching (`transcript/glossary.py`) now supports a layered
+  global-then-per-job lookup via `load_layered_glossary`/`merge_glossaries`.
+
+### Removed
+- `meeting-notes feedback` - replaced by `clarify template`/`clarify apply`. The
+  previous command read from paths that don't exist in the real job layout
+  (`<job>/minutes/meeting-notes.md`, `job_manifest.json`) and stored the misheard/
+  corrected term pair backwards, so glossary corrections were silently inert.
+
 ## [0.1.0] - 2026-07-22
 
 ### Added

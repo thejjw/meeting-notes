@@ -183,6 +183,51 @@ def correct_transcript_segments(
     return corrected_segments, all_corrections
 
 
+def merge_glossaries(base: Glossary, overlay: Glossary) -> Glossary:
+    """Merge two glossaries, with overlay extending base.
+
+    Terms are unioned by canonical (case-insensitive); a term present in both
+    has its aliases unioned. Overlay-only terms are appended after base terms.
+    """
+    merged: list[GlossaryTerm] = []
+    index_by_lower: dict[str, GlossaryTerm] = {}
+
+    for term in base.terms:
+        copy = GlossaryTerm(canonical=term.canonical, aliases=list(term.aliases))
+        merged.append(copy)
+        index_by_lower[copy.canonical.lower()] = copy
+
+    for term in overlay.terms:
+        key = term.canonical.lower()
+        existing = index_by_lower.get(key)
+        if existing:
+            for alias in term.aliases:
+                if alias not in existing.aliases:
+                    existing.aliases.append(alias)
+        else:
+            copy = GlossaryTerm(canonical=term.canonical, aliases=list(term.aliases))
+            merged.append(copy)
+            index_by_lower[key] = copy
+
+    return Glossary(terms=merged)
+
+
+def load_layered_glossary(global_path: Path | None, job_path: Path | None) -> Glossary:
+    """Load a glossary layered from a global base and a per-job overlay.
+
+    The job-scoped glossary (e.g. `<job_dir>/glossary.yaml`) takes precedence
+    for shared canonical terms and is unioned in for terms unique to it. The
+    global glossary is never modified by this function.
+    """
+    base = load_glossary(global_path)
+    overlay = load_glossary(job_path)
+    if not overlay.terms:
+        return base
+    if not base.terms:
+        return overlay
+    return merge_glossaries(base, overlay)
+
+
 def save_glossary(glossary: Glossary, path: Path) -> None:
     """Save a glossary to a YAML file."""
     path.parent.mkdir(parents=True, exist_ok=True)

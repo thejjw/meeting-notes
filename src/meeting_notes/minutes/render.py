@@ -144,6 +144,12 @@ def render_minutes(
     if include_user_clarifications and summary.get("user_clarifications"):
         lines.append("## 사용자 확인 및 정정")
         lines.append("")
+        lines.append(
+            "- 답변은 이 파일이 아닌 `clarifications.yaml`에 입력하세요: "
+            "`meeting-notes clarify template <job_dir>` 실행 후 편집하고 "
+            "`meeting-notes clarify apply <job_dir>`로 반영합니다."
+        )
+        lines.append("")
         category_labels = {
             "asr_correction": "ASR 정정",
             "missing_info": "정보 확인",
@@ -152,13 +158,18 @@ def render_minutes(
         for item in summary["user_clarifications"]:
             cat = category_labels.get(item.get("category", ""), "확인 요청")
             question = item.get("question", "")
+            heard = item.get("heard_text")
+            heard_text = f" (전사됨: `{heard}`)" if heard else ""
             suggestion = item.get("suggested_correction")
             sugg_text = f" (추천 정정: `{suggestion}`)" if suggestion else ""
-            lines.append(f"- [ ] **[{cat}]** {question}{sugg_text}")
+            resolved = bool(item.get("resolved"))
+            checkbox = "[x]" if resolved else "[ ]"
+            lines.append(f"- {checkbox} **[{cat}]** {question}{heard_text}{sugg_text}")
             if include_evidence_links and item.get("evidence"):
                 evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"])
                 lines.append(f"  - 근거: {evidence}")
-            lines.append("  - 답변: ")
+            if resolved:
+                lines.append(f"  - 답변: {item.get('user_answer') or ''}")
         lines.append("")
 
     # Transcription uncertainties

@@ -479,6 +479,60 @@ def speakers_apply(
         raise typer.Exit(1) from error
 
 
+clarify_app = typer.Typer(help="Review AI clarification questions and apply human answers.")
+app.add_typer(clarify_app, name="clarify")
+
+
+@clarify_app.command("template")
+def clarify_template(
+    job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
+    output: Annotated[Optional[str], typer.Option("--output", help="Template output path.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
+) -> None:
+    """Create an editable clarifications.yaml with the AI's open questions."""
+    from meeting_notes.clarifications import ClarificationError, command_template
+
+    try:
+        command_template(job_dir, output, force)
+    except ClarificationError as error:
+        console.print(f"[red]Clarifications template failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
+@clarify_app.command("apply")
+def clarify_apply(
+    job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
+    answers: Annotated[Optional[str], typer.Option("--answers", help="Clarifications file path.")] = None,
+    local_only: Annotated[bool, typer.Option("--local-only", help="Reject remote summarizers.")] = False,
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+) -> None:
+    """Apply answered clarifications: correct the job glossary and transcript,
+    then re-summarize with the confirmed answers as context and publish a new
+    generation."""
+    from meeting_notes.clarifications import ClarificationError, command_apply
+
+    try:
+        command_apply(job_dir, answers, config_path, local_only)
+    except ClarificationError as error:
+        console.print(f"[red]Clarify apply failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
+glossary_app = typer.Typer(help="Manage the global and per-job glossaries.")
+app.add_typer(glossary_app, name="glossary")
+
+
+@glossary_app.command("promote")
+def glossary_promote(
+    job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+) -> None:
+    """Promote a job's glossary terms into the global glossary."""
+    from meeting_notes.clarifications import command_promote
+
+    command_promote(job_dir, config_path)
+
+
 summarizers_app = typer.Typer(help="Inspect and test summarization adapters.")
 app.add_typer(summarizers_app, name="summarizers")
 
@@ -528,24 +582,3 @@ def clean(
     run_clean(job_dir=job_dir, stage=stage, yes=yes)
 
 
-# --- feedback command ---
-
-
-@app.command()
-def feedback(
-    notes_or_job: Annotated[str, typer.Argument(help="Path to Markdown notes file or job directory.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
-    update_glossary: Annotated[bool, typer.Option("--update-glossary/--no-glossary")] = True,
-    re_summarize: Annotated[
-        bool, typer.Option("--re-summarize", help="Re-run LLM summarizer with human feedback overrides.")
-    ] = False,
-) -> None:
-    """Incorporate user feedback and ASR corrections from Markdown notes."""
-    from meeting_notes.pipeline import run_feedback
-
-    run_feedback(
-        notes_or_job,
-        config_path=config_path,
-        update_glossary=update_glossary,
-        re_summarize=re_summarize,
-    )

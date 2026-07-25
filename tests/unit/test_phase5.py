@@ -153,8 +153,11 @@ class TestMinutesRendering:
                 {
                     "category": "asr_correction",
                     "question": "Is 'ArgoCD' the correct spelling for '아르고 시디'?",
+                    "heard_text": "아르고 시디",
                     "suggested_correction": "ArgoCD",
                     "evidence": ["seg-000012"],
+                    "user_answer": None,
+                    "resolved": False,
                 }
             ],
         }
@@ -163,6 +166,25 @@ class TestMinutesRendering:
         assert "[ASR 정정]" in md
         assert "ArgoCD" in md
         assert "seg-000012" in md
+        assert "- [ ]" in md
+
+    def test_render_resolved_clarification_shows_answer(self) -> None:
+        summary = {
+            "user_clarifications": [
+                {
+                    "category": "asr_correction",
+                    "question": "Is 'ArgoCD' correct for '아르고 시디'?",
+                    "heard_text": "아르고 시디",
+                    "suggested_correction": "ArgoCD",
+                    "evidence": ["seg-000012"],
+                    "user_answer": "ArgoCD",
+                    "resolved": True,
+                }
+            ],
+        }
+        md = render_minutes(summary)
+        assert "- [x]" in md
+        assert "답변: ArgoCD" in md
 
 
 class TestTranscriptChunking:

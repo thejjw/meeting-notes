@@ -180,18 +180,29 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["category", "question", "suggested_correction", "evidence"],
+        "required": [
+          "category",
+          "question",
+          "heard_text",
+          "suggested_correction",
+          "evidence",
+          "user_answer",
+          "resolved"
+        ],
         "properties": {
           "category": {
             "type": "string",
             "enum": ["asr_correction", "missing_info", "term_clarification"]
           },
           "question": { "type": "string" },
+          "heard_text": { "type": ["string", "null"] },
           "suggested_correction": { "type": ["string", "null"] },
           "evidence": {
             "type": "array",
             "items": { "type": "string" }
-          }
+          },
+          "user_answer": { "type": ["string", "null"] },
+          "resolved": { "type": "boolean" }
         }
       }
     }

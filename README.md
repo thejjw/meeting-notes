@@ -111,7 +111,9 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes process FILE --dry-run` | Show plan without running |
 | `meeting-notes process FILE --from summarize` | Resume from specific stage |
 | `meeting-notes process FILE --force-stage transcribe` | Re-run a specific stage |
-| `meeting-notes feedback FILE` | Ingest user responses from Markdown notes to update glossary & summary |
+| `meeting-notes clarify template JOB_DIR` | Create an editable `clarifications.yaml` from open AI questions |
+| `meeting-notes clarify apply JOB_DIR` | Apply answers: correct glossary & transcript, re-summarize, publish |
+| `meeting-notes glossary promote JOB_DIR` | Promote a job's glossary terms into the global glossary |
 | `meeting-notes doctor` | Check environment and tools |
 | `meeting-notes config show` | Show current configuration |
 | `meeting-notes models list` | List available Whisper models |
@@ -119,31 +121,46 @@ original recording. Without that flag, the input directory is not modified.
 
 ## User Feedback & Terminology Refinement
 
-Automatic Speech Recognition (ASR) may mishear technical terms or leave action item assignees unspecified. Generated meeting notes include a `## 사용자 확인 및 정정` section to let users review and correct these items.
+Automatic Speech Recognition (ASR) may mishear technical terms or leave action item assignees unspecified. Generated meeting notes include a `## 사용자 확인 및 정정` section listing the AI's open questions. Answers are entered in a separate `clarifications.yaml` sidecar file, not in the notes themselves — the notes are regenerated on every apply, so anything typed directly into them would be overwritten.
 
 ### Workflow
 
-1. **Review Notes**: Open `*_meeting-notes.md` in your text editor and check off or fill in answers:
-   ```markdown
-   ## 사용자 확인 및 정정
-
-   - [x] **[ASR 정정]** "아르고 시디"로 전사됨. "ArgoCD"가 맞나요? (추천 정정: `ArgoCD`)
-     - 근거: [seg-000012](../transcript/transcript.merged.md#seg-000012)
-     - 답변: ArgoCD
-   - [x] **[정보 확인]** "OAuth 전환 작업" 담당자가 미정입니다.
-     - 근거: [seg-000045](../transcript/transcript.merged.md#seg-000045)
-     - 답변: 김철수
+1. **Create the answer sheet**:
+   ```bash
+   uv run meeting-notes clarify template JOB_DIR
+   ```
+   This writes `JOB_DIR/clarifications.yaml` with one entry per open question, e.g.:
+   ```yaml
+   clarifications:
+     clarif-000:
+       category: asr_correction
+       question: '"아르고 시디"로 전사됨. "ArgoCD"가 맞나요?'
+       heard_text: 아르고 시디
+       suggested_correction: ArgoCD
+       evidence: [seg-000012]
+       answer: ''
+     clarif-001:
+       category: missing_info
+       question: "OAuth 전환 작업" 담당자가 미정입니다.
+       evidence: [seg-000045]
+       answer: ''
    ```
 
-2. **Incorporate Feedback**:
+2. **Fill in the `answer:` fields** and apply:
    ```bash
-   uv run meeting-notes feedback 2026-07-25_topic_meeting-notes.md
+   uv run meeting-notes clarify apply JOB_DIR
    ```
 
 ### What Happens:
-- **Glossary Update**: Term corrections (e.g. `아르고 시디` -> `ArgoCD`) are saved to `config/glossary.yaml`. Future Whisper transcriptions and LLM prompts will automatically recognize these terms.
-- **Summary Update**: Confirmed assignees/dates update `summary.json` and the rendered Markdown notes.
-- **Optional LLM Re-summarization**: Use `--re-summarize` to re-run the LLM summarizer with human feedback overrides.
+- **Job-scoped glossary**: `asr_correction`/`term_clarification` answers (e.g. `아르고 시디` -> `ArgoCD`) are saved to `JOB_DIR/glossary.yaml`, scoped to this recording only — not the shared global glossary. `missing_info` answers (owners, dates) are never added to any glossary.
+- **Transcript correction**: the job glossary, layered over the global one, is re-applied to `transcript/transcript.merged.json` and its exported `.md`/`.srt`/`.vtt` variants. Only literal (non-inflected) occurrences of the misheard text are substituted; Korean particle-suffixed occurrences may remain in the raw transcript even after this step.
+- **Re-summarization**: the AI summarizer is re-run with the confirmed answers passed as authoritative context, so the regenerated summary reflects correct terminology even where the literal substitution above didn't apply.
+- **New generation published**: results land in a new `output/finalized/<generation>/` directory; the previous generation is marked superseded in `manifest.json`, never overwritten in place.
+- **Global promotion (optional)**: once a term proves useful across meetings, promote it explicitly:
+  ```bash
+  uv run meeting-notes glossary promote JOB_DIR
+  ```
+  This is the only way terms move from a job glossary into `config/glossary.yaml`, where they'll apply to every future recording.
 
 ## Configuration
 

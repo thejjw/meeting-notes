@@ -399,8 +399,11 @@ def test_schema_validation_with_user_clarifications() -> None:
             {
                 "category": "asr_correction",
                 "question": "Is 'ArgoCD' the intended tool?",
+                "heard_text": "아르고 시디",
                 "suggested_correction": "ArgoCD",
                 "evidence": ["seg-000001"],
+                "user_answer": None,
+                "resolved": False,
             }
         ],
     }

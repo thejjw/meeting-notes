@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import re
+import tempfile
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -32,6 +33,33 @@ def _file_hash(path: Path, chunk_size: int = 8192) -> str:
 def _text_hash(text: str) -> str:
     """Compute SHA-256 hash of text content."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def file_sha256(path: Path) -> str:
+    """Compute the full SHA-256 hex digest of a file's contents.
+
+    Used for staleness fingerprints on editable sidecar files (speaker maps,
+    clarification answers), which need the full digest rather than the
+    truncated slug hash above.
+    """
+    digest = hashlib.sha256()
+    with open(path, "rb") as stream:
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def atomic_write_text(path: Path, text: str) -> None:
+    """Write text to a file atomically via a temp file + rename."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
 
 
 def make_job_slug(source_path: Path, title_hint: str | None = None) -> str:

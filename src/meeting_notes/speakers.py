@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import shutil
-import tempfile
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,7 +16,7 @@ import yaml
 from rich.console import Console
 
 from meeting_notes.config import MeetingNotesConfig, load_config
-from meeting_notes.jobs import load_manifest, save_manifest
+from meeting_notes.jobs import atomic_write_text, file_sha256, load_manifest, save_manifest
 from meeting_notes.minutes.render import render_minutes
 from meeting_notes.naming import generate_filenames, resolve_date, sanitize_short_title
 from meeting_notes.pipeline import _format_summary_transcript
@@ -38,11 +37,7 @@ class SpeakerMapError(ValueError):
 
 
 def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
+    return file_sha256(path)
 
 
 def _mapping_hash(mapping: dict[str, str]) -> str:
@@ -51,15 +46,7 @@ def _mapping_hash(mapping: dict[str, str]) -> str:
 
 
 def _atomic_text(path: Path, text: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(text)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+    atomic_write_text(path, text)
 
 
 def _transcript(job_dir: Path) -> tuple[Path, dict[str, Any]]:

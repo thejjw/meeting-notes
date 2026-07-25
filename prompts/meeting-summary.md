@@ -13,7 +13,7 @@ Rules:
 - Attach valid transcript segment IDs and timestamps to every decision and action item.
 - Prefer concise paraphrase over copying the full transcript.
 - Record ambiguous or suspicious transcription under transcription_uncertainties instead of guessing.
-- Record questions for human verification (ASR mishearings, missing action item owners/due dates, or ambiguous technical terms) under user_clarifications.
+- Record questions for human verification (ASR mishearings, missing action item owners/due dates, or ambiguous technical terms) under user_clarifications. See the User Clarifications Format section below.
 - Do not treat casual discussion as an action item unless a concrete future task or commitment is stated.
 - When Korean and English are mixed, write natural Korean while preserving the original English terminology.
 
@@ -44,6 +44,34 @@ Example chronological structure:
       "time_range": "03:00 ~ 08:00",
       "summary": ["8월 초 설치 시작 합의", "경화 담당자로 배정"],
       "evidence": ["seg-000010", "seg-000020"]
+    }
+  ]
+}
+```
+
+## User Clarifications Format
+
+For each `user_clarifications` entry:
+- `category`: one of `asr_correction`, `missing_info`, `term_clarification`.
+- `question`: the question for the human reviewer, in Korean.
+- `heard_text`: the exact span as transcribed (what ASR produced), or null if the issue is missing information rather than a mishearing.
+- `suggested_correction`: your best-guess corrected term, or null if you have none.
+- `evidence`: segment IDs supporting the question.
+- `user_answer`: always null. This field is filled in later by a human reviewer, not by you.
+- `resolved`: always false. This field is set later by a human reviewer, not by you.
+
+Example:
+```json
+{
+  "user_clarifications": [
+    {
+      "category": "asr_correction",
+      "question": "\"아르고 시디\"로 전사됨. \"ArgoCD\"가 맞나요?",
+      "heard_text": "아르고 시디",
+      "suggested_correction": "ArgoCD",
+      "evidence": ["seg-000012"],
+      "user_answer": null,
+      "resolved": false
     }
   ]
 }

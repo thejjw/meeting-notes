@@ -712,18 +712,37 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
             for s, ts in zip(segments, ts_segments):
                 s["speaker"] = ts.speaker
 
-        # Apply glossary corrections if enabled
+        # Apply glossary corrections if enabled. The job-scoped glossary
+        # (<job_dir>/glossary.yaml, written by `clarify apply`) is layered
+        # over the global glossary so corrections stay scoped to this
+        # recording unless explicitly promoted (`meeting-notes glossary promote`).
         if config.glossary.enabled:
-            from meeting_notes.transcript.glossary import correct_transcript_segments, load_glossary
+            from meeting_notes.transcript.glossary import (
+                correct_transcript_segments,
+                load_layered_glossary,
+            )
             from pathlib import Path as P
 
-            glossary = load_glossary(P(config.glossary.path) if config.glossary.path else None)
+            global_path = P(config.glossary.path) if config.glossary.path else None
+            job_glossary_path = job_dir / "glossary.yaml"
+            glossary = load_layered_glossary(global_path, job_glossary_path)
             if glossary.terms:
                 segments, corrections = correct_transcript_segments(
                     segments,
                     glossary,
                     case_sensitive=config.glossary.case_sensitive,
                 )
+                if corrections and config.glossary.record_corrections:
+                    manifest["glossary_corrections"] = [
+                        {
+                            "segment_id": c.segment_id,
+                            "original_text": c.original_text,
+                            "corrected_text": c.corrected_text,
+                            "rule_canonical": c.rule_canonical,
+                            "rule_alias": c.rule_alias,
+                        }
+                        for c in corrections
+                    ]
 
         # Save merged transcript
         merged_path = job_dir / "transcript" / "transcript.merged.json"
@@ -761,22 +780,81 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
         raise
 
 
+class SummarizationUnavailable(RuntimeError):
+    """Raised when the configured summarizer is disabled, rejected, or unavailable.
+
+    The pipeline stage treats this as a skip; callers that require a summary
+    (like re-summarizing after human clarification) should let it propagate.
+    """
+
+
+def _summarize_transcript(
+    segments: list[dict],
+    config: MeetingNotesConfig,
+    local_only: bool,
+    *,
+    extra_context: str = "",
+) -> dict:
+    """Run the configured summarizer adapter over transcript segments.
+
+    Shared by the `summarize` pipeline stage and `clarifications.apply_clarifications`
+    (which passes `extra_context` — confirmed human answers the model should treat
+    as authoritative over the raw transcript).
+    """
+    if not config.summarization.enabled:
+        raise SummarizationUnavailable("Summarization is disabled in configuration.")
+
+    from meeting_notes.summarization.adapters import configured_adapter_options, get_adapter
+
+    transcript_text = _format_summary_transcript(segments)
+
+    prompt_path = Path(config.summarization.prompt_path)
+    prompt = (
+        prompt_path.read_text(encoding="utf-8")
+        if prompt_path.exists()
+        else "Summarize this meeting transcript."
+    )
+    if extra_context:
+        prompt = f"{extra_context}\n\n{prompt}"
+
+    schema_path = (
+        Path(config.summarization.output_schema_path)
+        if config.summarization.output_schema_path
+        else None
+    )
+
+    adapter_name = config.summarization.backend
+    if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
+        raise SummarizationUnavailable(
+            f"Summarization adapter '{adapter_name}' is not allowed with --local-only."
+        )
+
+    adapter_kwargs = configured_adapter_options(config.summarization)
+    adapter = get_adapter(adapter_name, **adapter_kwargs)
+    if not adapter.is_available():
+        raise SummarizationUnavailable(f"Summarization adapter '{adapter_name}' is not available.")
+
+    result = adapter.summarize(
+        transcript_text,
+        prompt=prompt,
+        schema_path=schema_path,
+        timeout_seconds=config.summarization.timeout_seconds,
+        metadata={
+            "language": config.summarization.language,
+            "speaker_resolution": "diarized" if any(s.get("speaker") for s in segments) else "none",
+        },
+    )
+    return result.data
+
+
 def _run_summarize(
     job_dir: Path, manifest: dict, config: MeetingNotesConfig, local_only: bool = False
 ) -> dict:
     """Stage: Run summarization."""
     update_stage_status(manifest, "summarize", "running")
     try:
-        if not config.summarization.enabled:
-            update_stage_status(manifest, "summarize", "skipped")
-            return manifest
-
         import json
-        from meeting_notes.summarization.adapters import (
-            configured_adapter_options,
-            get_adapter,
-            summarizer_provenance,
-        )
+        from meeting_notes.summarization.adapters import summarizer_provenance
 
         # Load transcript text
         merged_path = job_dir / "transcript" / "transcript.merged.json"
@@ -789,58 +867,18 @@ def _run_summarize(
         raw_data = json.loads(merged_path.read_text(encoding="utf-8"))
         segments = raw_data.get("segments", [])
 
-        transcript_text = _format_summary_transcript(segments)
-
-        # Load prompt
-        prompt_path = Path(config.summarization.prompt_path)
-        if prompt_path.exists():
-            prompt = prompt_path.read_text(encoding="utf-8")
-        else:
-            prompt = "Summarize this meeting transcript."
-
-        # Load schema
-        schema_path = (
-            Path(config.summarization.output_schema_path)
-            if config.summarization.output_schema_path
-            else None
-        )
-
-        # Get adapter and run
-        adapter_name = config.summarization.backend
-
-        # Check local-only mode
-        if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
-            console.print(
-                f"[yellow]  Summarization adapter '{adapter_name}' rejected: --local-only mode[/yellow]"
-            )
+        try:
+            data = _summarize_transcript(segments, config, local_only)
+        except SummarizationUnavailable as reason:
+            console.print(f"[yellow]  {reason}[/yellow]")
             update_stage_status(manifest, "summarize", "skipped")
             return manifest
-
-        adapter_kwargs = configured_adapter_options(config.summarization)
-        adapter = get_adapter(adapter_name, **adapter_kwargs)
-        if not adapter.is_available():
-            console.print(
-                f"[yellow]  Summarization adapter '{adapter_name}' not available[/yellow]"
-            )
-            update_stage_status(manifest, "summarize", "skipped")
-            return manifest
-
-        result = adapter.summarize(
-            transcript_text,
-            prompt=prompt,
-            schema_path=schema_path,
-            timeout_seconds=config.summarization.timeout_seconds,
-            metadata={
-                "language": config.summarization.language,
-                "speaker_resolution": "diarized" if any(s.get("speaker") for s in segments) else "none",
-            },
-        )
 
         # Save summary
         summary_path = job_dir / "summary" / "summary.json"
         summary_path.parent.mkdir(parents=True, exist_ok=True)
         summary_path.write_text(
-            json.dumps(result.data, indent=2, ensure_ascii=False),
+            json.dumps(data, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         manifest["stages"]["summarize"]["provider"] = summarizer_provenance(
@@ -1254,75 +1292,3 @@ def run_clean(job_dir: str, stage: str | None = None, yes: bool = False) -> None
         console.print(f"[green]Cleaned all artifacts[/green]")
 
 
-def run_feedback(
-    input_path: str,
-    *,
-    config_path: str | None = None,
-    update_glossary: bool = True,
-    re_summarize: bool = False,
-) -> None:
-    """Incorporate user feedback and ASR corrections from Markdown notes."""
-    import json
-    from meeting_notes.minutes.feedback import apply_user_feedback, parse_markdown_feedback
-    from meeting_notes.minutes.render import render_minutes, save_minutes
-
-    target = Path(input_path)
-    if not target.exists():
-        console.print(f"[red]File or directory not found:[/red] {input_path}")
-        raise typer.Exit(1)
-
-    # Determine markdown path and job dir
-    if target.is_dir():
-        job_dir = target
-        notes_path = job_dir / "minutes" / "meeting-notes.md"
-    elif target.suffix.lower() == ".md":
-        notes_path = target
-        job_dir = target.parent
-    else:
-        console.print(f"[red]Input must be a .md file or job directory:[/red] {input_path}")
-        raise typer.Exit(1)
-
-    summary_path = job_dir / "summary" / "summary.json"
-    if not summary_path.exists():
-        summary_path = job_dir.parent / "summary" / "summary.json"
-
-    if not summary_path.exists():
-        console.print(f"[red]No summary.json found associated with:[/red] {input_path}")
-        raise typer.Exit(1)
-
-    config = load_config(config_path)
-    markdown_text = notes_path.read_text(encoding="utf-8")
-    items = parse_markdown_feedback(markdown_text)
-
-    if not items:
-        console.print("[yellow]No user responses or checked items found in '## 사용자 확인 및 정정'.[/yellow]")
-        return
-
-    summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
-    gloss_path = Path("config/glossary.yaml") if update_glossary else None
-
-    updated_summary, count = apply_user_feedback(
-        summary_data, items, glossary_path=gloss_path
-    )
-
-    # Save updated summary.json
-    summary_path.write_text(
-        json.dumps(updated_summary, indent=2, ensure_ascii=False),
-        encoding="utf-8",
-    )
-
-    if re_summarize:
-        console.print("[cyan]Re-running summarization with feedback overrides...[/cyan]")
-        manifest_path = job_dir / "job_manifest.json"
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
-        _run_summarize(job_dir, manifest, config)
-        updated_summary = json.loads(summary_path.read_text(encoding="utf-8"))
-
-    # Re-render minutes
-    rendered_md = render_minutes(updated_summary)
-    save_minutes(rendered_md, notes_path)
-
-    console.print(f"[green]Successfully processed {count} feedback items.[/green]")
-    if update_glossary and gloss_path and gloss_path.exists():
-        console.print(f"  [green]Glossary updated:[/green] {gloss_path}")
-    console.print(f"  [green]Updated meeting notes:[/green] {notes_path}")
