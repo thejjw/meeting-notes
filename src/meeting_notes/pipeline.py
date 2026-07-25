@@ -1252,3 +1252,77 @@ def run_clean(job_dir: str, stage: str | None = None, yes: bool = False) -> None
             if dir_path.exists():
                 shutil.rmtree(dir_path)
         console.print(f"[green]Cleaned all artifacts[/green]")
+
+
+def run_feedback(
+    input_path: str,
+    *,
+    config_path: str | None = None,
+    update_glossary: bool = True,
+    re_summarize: bool = False,
+) -> None:
+    """Incorporate user feedback and ASR corrections from Markdown notes."""
+    import json
+    from meeting_notes.minutes.feedback import apply_user_feedback, parse_markdown_feedback
+    from meeting_notes.minutes.render import render_minutes, save_minutes
+
+    target = Path(input_path)
+    if not target.exists():
+        console.print(f"[red]File or directory not found:[/red] {input_path}")
+        raise typer.Exit(1)
+
+    # Determine markdown path and job dir
+    if target.is_dir():
+        job_dir = target
+        notes_path = job_dir / "minutes" / "meeting-notes.md"
+    elif target.suffix.lower() == ".md":
+        notes_path = target
+        job_dir = target.parent
+    else:
+        console.print(f"[red]Input must be a .md file or job directory:[/red] {input_path}")
+        raise typer.Exit(1)
+
+    summary_path = job_dir / "summary" / "summary.json"
+    if not summary_path.exists():
+        summary_path = job_dir.parent / "summary" / "summary.json"
+
+    if not summary_path.exists():
+        console.print(f"[red]No summary.json found associated with:[/red] {input_path}")
+        raise typer.Exit(1)
+
+    config = load_config(config_path)
+    markdown_text = notes_path.read_text(encoding="utf-8")
+    items = parse_markdown_feedback(markdown_text)
+
+    if not items:
+        console.print("[yellow]No user responses or checked items found in '## 사용자 확인 및 정정'.[/yellow]")
+        return
+
+    summary_data = json.loads(summary_path.read_text(encoding="utf-8"))
+    gloss_path = Path("config/glossary.yaml") if update_glossary else None
+
+    updated_summary, count = apply_user_feedback(
+        summary_data, items, glossary_path=gloss_path
+    )
+
+    # Save updated summary.json
+    summary_path.write_text(
+        json.dumps(updated_summary, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    if re_summarize:
+        console.print("[cyan]Re-running summarization with feedback overrides...[/cyan]")
+        manifest_path = job_dir / "job_manifest.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+        _run_summarize(job_dir, manifest, config)
+        updated_summary = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    # Re-render minutes
+    rendered_md = render_minutes(updated_summary)
+    save_minutes(rendered_md, notes_path)
+
+    console.print(f"[green]Successfully processed {count} feedback items.[/green]")
+    if update_glossary and gloss_path and gloss_path.exists():
+        console.print(f"  [green]Glossary updated:[/green] {gloss_path}")
+    console.print(f"  [green]Updated meeting notes:[/green] {notes_path}")

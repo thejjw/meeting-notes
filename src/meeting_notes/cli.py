@@ -526,3 +526,26 @@ def clean(
     from meeting_notes.pipeline import run_clean
 
     run_clean(job_dir=job_dir, stage=stage, yes=yes)
+
+
+# --- feedback command ---
+
+
+@app.command()
+def feedback(
+    notes_or_job: Annotated[str, typer.Argument(help="Path to Markdown notes file or job directory.")],
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    update_glossary: Annotated[bool, typer.Option("--update-glossary/--no-glossary")] = True,
+    re_summarize: Annotated[
+        bool, typer.Option("--re-summarize", help="Re-run LLM summarizer with human feedback overrides.")
+    ] = False,
+) -> None:
+    """Incorporate user feedback and ASR corrections from Markdown notes."""
+    from meeting_notes.pipeline import run_feedback
+
+    run_feedback(
+        notes_or_job,
+        config_path=config_path,
+        update_glossary=update_glossary,
+        re_summarize=re_summarize,
+    )

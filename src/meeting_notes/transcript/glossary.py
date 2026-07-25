@@ -181,3 +181,52 @@ def correct_transcript_segments(
         )
 
     return corrected_segments, all_corrections
+
+
+def save_glossary(glossary: Glossary, path: Path) -> None:
+    """Save a glossary to a YAML file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    terms_data = []
+    for term in glossary.terms:
+        entry: dict[str, object] = {"canonical": term.canonical}
+        if term.aliases:
+            entry["aliases"] = term.aliases
+        terms_data.append(entry)
+    data = {"terms": terms_data}
+    path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+
+def add_term_to_glossary(path: Path, canonical: str, alias: str | None = None) -> bool:
+    """Add a canonical term and optional alias to the glossary file.
+
+    Returns True if a new term or alias was added, False if already present.
+    """
+    glossary = load_glossary(path if path.exists() else None)
+    canonical_clean = canonical.strip()
+    if not canonical_clean:
+        return False
+
+    alias_clean = alias.strip() if alias else None
+
+    # Look for existing term
+    existing_term = None
+    for term in glossary.terms:
+        if term.canonical.lower() == canonical_clean.lower():
+            existing_term = term
+            break
+
+    modified = False
+    if existing_term:
+        if alias_clean and alias_clean.lower() != canonical_clean.lower():
+            if alias_clean not in existing_term.aliases:
+                existing_term.aliases.append(alias_clean)
+                modified = True
+    else:
+        aliases = [alias_clean] if alias_clean and alias_clean.lower() != canonical_clean.lower() else []
+        glossary.terms.append(GlossaryTerm(canonical=canonical_clean, aliases=aliases))
+        modified = True
+
+    if modified:
+        save_glossary(glossary, path)
+
+    return modified
