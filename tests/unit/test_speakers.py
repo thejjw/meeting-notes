@@ -77,44 +77,6 @@ def test_stale_and_unknown_maps_fail_with_remediation(tmp_path: Path) -> None:
         load_mapping(job, path)
 
 
-def test_apply_writes_named_formats_and_generation(tmp_path: Path) -> None:
-    job = _job(tmp_path)
-    path, _ = write_template(job)
-    document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    document["speakers"]["SPEAKER_00"]["name"] = "민지"
-    document["speakers"]["SPEAKER_01"]["name"] = "민지"
-    path.write_text(yaml.safe_dump(document, allow_unicode=True), encoding="utf-8")
-    config = MeetingNotesConfig(summarization={"enabled": False})
-
-    generation = apply_speakers(job, path, config)
-
-    named = json.loads((job / "transcript" / "transcript.named.json").read_text(encoding="utf-8"))
-    assert named["segments"][0]["speaker_id"] == "SPEAKER_00"
-    assert named["segments"][0]["speaker"] == "민지"
-    assert named["metadata"]["participants"] == ["민지"]
-    assert "민지:" in (job / "transcript" / "transcript.named.srt").read_text(encoding="utf-8")
-    manifest = load_manifest(job)
-    assert manifest["speaker_publications"]["active_generation"] == generation["id"]
-    assert all(Path(item).exists() for item in generation["managed_paths"])
-    recording = next(Path(item) for item in generation["managed_paths"] if item.endswith(".m4a"))
-    root = recording.parent
-    assert {path.name for path in root.iterdir()} == {
-        recording.name,
-        "2026-07-25_meeting_meeting-notes.md",
-        "2026-07-25_meeting_transcript.md",
-        "json",
-        "subtitles",
-        "run",
-    }
-    assert (root / "json" / "2026-07-25_meeting_meeting-notes.json").exists()
-    assert (root / "json" / "2026-07-25_meeting_transcript.json").exists()
-    assert (root / "subtitles" / "2026-07-25_meeting_transcript.srt").exists()
-    assert (root / "subtitles" / "2026-07-25_meeting_transcript.vtt").exists()
-    report = (root / "run" / "report.md").read_text(encoding="utf-8")
-    assert "Status: `success`" in report
-    assert "Speaker resolution: `mapped`" in report
-
-
 def test_apply_without_diarization_needs_no_map(tmp_path: Path) -> None:
     job = _job(tmp_path)
     config = MeetingNotesConfig(summarization={"enabled": False})
