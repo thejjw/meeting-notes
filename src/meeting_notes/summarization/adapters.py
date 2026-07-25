@@ -7,7 +7,6 @@ Each adapter implements the same interface so they can be swapped via config.
 from __future__ import annotations
 
 import json
-import os
 import tempfile
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -170,9 +169,7 @@ class CodexAdapter(SummarizerAdapter):
                 )
 
             output = (
-                output_file.read_text(encoding="utf-8")
-                if output_file.exists()
-                else result.stdout
+                output_file.read_text(encoding="utf-8") if output_file.exists() else result.stdout
             )
             if not output.strip():
                 raise RuntimeError("Codex CLI returned empty output")
@@ -314,8 +311,7 @@ class MimoCodeAdapter(SummarizerAdapter):
 
             if not result.returncode == 0:
                 raise RuntimeError(
-                    f"Mimo Code failed (exit {result.returncode}):\n"
-                    f"  stderr: {result.stderr[:500]}"
+                    f"Mimo Code failed (exit {result.returncode}):\n  stderr: {result.stderr[:500]}"
                 )
 
             return SummaryResult(
@@ -438,8 +434,7 @@ class LocalCommandAdapter(SummarizerAdapter):
 
         if not result.returncode == 0:
             raise RuntimeError(
-                f"Local command failed (exit {result.returncode}):\n"
-                f"  stderr: {result.stderr[:500]}"
+                f"Local command failed (exit {result.returncode}):\n  stderr: {result.stderr[:500]}"
             )
 
         return SummaryResult(
@@ -482,6 +477,47 @@ def get_adapter(name: str, **kwargs: Any) -> SummarizerAdapter:
         )
 
     return _adapters[canonical_name](**kwargs)
+
+
+def configured_adapter_options(config: Any) -> dict[str, Any]:
+    """Build provider-specific adapter arguments from summarization config."""
+    backend = config.backend
+    if backend in {"codex", "codex_cli"}:
+        options = config.codex
+        return {
+            "executable": options.executable,
+            "model": options.model,
+            "reasoning_effort": options.reasoning_effort,
+            "ephemeral": options.ephemeral,
+            "skip_git_repo_check": options.skip_git_repo_check,
+            "ignore_user_config": options.ignore_user_config,
+            "ignore_rules": options.ignore_rules,
+            "extra_args": options.extra_args,
+        }
+    if backend == "claude":
+        options = config.claude
+        return {"executable": options.executable, "model": options.model}
+    if backend == "local_command":
+        options = config.local_command
+        return {"command": options.command, "environment": options.environment}
+    return {}
+
+
+def summarizer_provenance(config: Any) -> dict[str, str | None]:
+    """Return the requested provider settings without claiming effective defaults."""
+    backend = str(config.backend)
+    model: str | None = None
+    reasoning_effort: str | None = None
+    if backend in {"codex", "codex_cli"}:
+        model = config.codex.model
+        reasoning_effort = config.codex.reasoning_effort
+    elif backend == "claude":
+        model = config.claude.model
+    return {
+        "backend": backend,
+        "requested_model": model,
+        "requested_reasoning_effort": reasoning_effort,
+    }
 
 
 def detect_available_adapters() -> dict[str, bool]:

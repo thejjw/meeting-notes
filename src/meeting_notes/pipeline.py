@@ -123,10 +123,7 @@ def _asr_remediation(
             f"--device {config.runtime.device} --config {quoted_config} --yes"
         )
 
-    cpu_ready = any(
-        item.get("backend") == "cpu" and item.get("healthy")
-        for item in runtimes
-    )
+    cpu_ready = any(item.get("backend") == "cpu" and item.get("healthy") for item in runtimes)
     if not runtime_ready and config.runtime.device == "vulkan" and cpu_ready:
         lines.extend(
             [
@@ -177,9 +174,7 @@ def _check_asr_readiness(config: MeetingNotesConfig, config_path: str | None) ->
         from meeting_notes.models import verify_model
 
         try:
-            model_ready, model_detail = verify_model(
-                config.asr.model, Path(config.asr.model_path)
-            )
+            model_ready, model_detail = verify_model(config.asr.model, Path(config.asr.model_path))
         except RuntimeError:
             model_ready = Path(config.asr.model_path).is_file()
             model_detail = "present" if model_ready else "missing"
@@ -279,7 +274,7 @@ def run_pipeline(
         console=console,
     ) as progress:
         for i, stage in enumerate(stages[start_idx:], start=start_idx):
-            task = progress.add_task(f"[{i+1}/{total}] {stage}...", total=None)
+            task = progress.add_task(f"[{i + 1}/{total}] {stage}...", total=None)
             try:
                 if stage == "prepare":
                     manifest = _run_prepare(source, job_dir, manifest, config)
@@ -304,14 +299,14 @@ def run_pipeline(
                 save_manifest(job_dir, manifest)
                 console.print(f"\n[red]Stage '{stage}' failed:[/red] {e}")
                 raise typer.Exit(1)
-            progress.update(task, completed=True, description=f"[{i+1}/{total}] {stage} done")
+            progress.update(task, completed=True, description=f"[{i + 1}/{total}] {stage} done")
 
     save_manifest(job_dir, manifest)
     console.print(f"\n[green]Pipeline complete.[/green] Job: {job_dir}")
     template = job_dir.resolve() / "speakers.yaml"
     if template.exists():
         console.print(f"Speaker template: {template}")
-        console.print(f"Next: uv run meeting-notes speakers apply \"{job_dir.resolve()}\"")
+        console.print(f'Next: uv run meeting-notes speakers apply "{job_dir.resolve()}"')
 
 
 def _print_dry_run(
@@ -396,12 +391,8 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
                 "device": config.runtime.device,
                 "executable": str(executable),
                 "managed": runtime_manifest is not None,
-                "runtime_version": (
-                    runtime_manifest.get("version") if runtime_manifest else None
-                ),
-                "runtime_backend": (
-                    runtime_manifest.get("backend") if runtime_manifest else None
-                ),
+                "runtime_version": (runtime_manifest.get("version") if runtime_manifest else None),
+                "runtime_backend": (runtime_manifest.get("backend") if runtime_manifest else None),
                 "source_revision": (
                     runtime_manifest.get("source_revision") if runtime_manifest else None
                 ),
@@ -511,8 +502,7 @@ def _print_diarization_remediation(
         "pyannote_installed": pyannote_installed,
         "hf_token_ready": bool(token),
         "local_diarization_model_ready": bool(
-            config.diarization.model_path
-            and Path(config.diarization.model_path).exists()
+            config.diarization.model_path and Path(config.diarization.model_path).exists()
         ),
     }
     console.print("[yellow]  Diarization unavailable.[/yellow]")
@@ -541,9 +531,7 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
             backend = PyannoteDiarizationBackend(
                 model_name=config.diarization.model,
                 model_path=(
-                    Path(config.diarization.model_path)
-                    if config.diarization.model_path
-                    else None
+                    Path(config.diarization.model_path) if config.diarization.model_path else None
                 ),
                 token_env=config.diarization.token_env,
                 device=config.diarization.device,
@@ -570,6 +558,7 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
 
             # Save diarization output
             import json
+
             diar_path = job_dir / "diarization" / "diarization.json"
             diar_data = {
                 "turns": [
@@ -666,6 +655,7 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
                 speaker_map = load_speaker_map(config.diarization.speaker_map_path)
                 if speaker_map:
                     from meeting_notes.diarization.reconcile import apply_speaker_map
+
                     apply_speaker_map(ts_segments, speaker_map)
 
             # Update segments with speaker info
@@ -692,19 +682,26 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
             "segments": segments,
         }
         merged_path.parent.mkdir(parents=True, exist_ok=True)
-        merged_path.write_text(json.dumps(merged_data, indent=2, ensure_ascii=False), encoding="utf-8")
+        merged_path.write_text(
+            json.dumps(merged_data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
 
         # Speaker identification is a downstream-only workflow. Never overwrite
         # a map the user may already have edited.
         from meeting_notes.speakers import write_template
+
         template_path, template_warning = write_template(job_dir, automatic=True)
         if template_warning:
-            console.print(f"[yellow]  Speaker map: {template_warning}; candidate: {template_path}[/yellow]")
+            console.print(
+                f"[yellow]  Speaker map: {template_warning}; candidate: {template_path}[/yellow]"
+            )
         elif template_path:
             manifest["speaker_template"] = {
                 "version": 1,
                 "path": str(template_path),
-                "transcript_sha256": __import__("hashlib").sha256(merged_path.read_bytes()).hexdigest(),
+                "transcript_sha256": __import__("hashlib")
+                .sha256(merged_path.read_bytes())
+                .hexdigest(),
             }
 
         update_stage_status(manifest, "merge", "completed")
@@ -714,7 +711,9 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
         raise
 
 
-def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, local_only: bool = False) -> dict:
+def _run_summarize(
+    job_dir: Path, manifest: dict, config: MeetingNotesConfig, local_only: bool = False
+) -> dict:
     """Stage: Run summarization."""
     update_stage_status(manifest, "summarize", "running")
     try:
@@ -723,7 +722,11 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
             return manifest
 
         import json
-        from meeting_notes.summarization.adapters import get_adapter, detect_available_adapters
+        from meeting_notes.summarization.adapters import (
+            configured_adapter_options,
+            get_adapter,
+            summarizer_provenance,
+        )
 
         # Load transcript text
         merged_path = job_dir / "transcript" / "transcript.merged.json"
@@ -746,40 +749,29 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
             prompt = "Summarize this meeting transcript."
 
         # Load schema
-        schema_path = Path(config.summarization.output_schema_path) if config.summarization.output_schema_path else None
+        schema_path = (
+            Path(config.summarization.output_schema_path)
+            if config.summarization.output_schema_path
+            else None
+        )
 
         # Get adapter and run
         adapter_name = config.summarization.backend
 
         # Check local-only mode
         if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
-            console.print(f"[yellow]  Summarization adapter '{adapter_name}' rejected: --local-only mode[/yellow]")
+            console.print(
+                f"[yellow]  Summarization adapter '{adapter_name}' rejected: --local-only mode[/yellow]"
+            )
             update_stage_status(manifest, "summarize", "skipped")
             return manifest
 
-        adapter_kwargs = {}
-        if adapter_name in ("codex", "codex_cli"):
-            codex_options = config.summarization.codex
-            adapter_kwargs = {
-                "executable": codex_options.executable,
-                "model": codex_options.model,
-                "reasoning_effort": codex_options.reasoning_effort,
-                "ephemeral": codex_options.ephemeral,
-                "skip_git_repo_check": codex_options.skip_git_repo_check,
-                "ignore_user_config": codex_options.ignore_user_config,
-                "ignore_rules": codex_options.ignore_rules,
-                "extra_args": codex_options.extra_args,
-            }
-        elif adapter_name == "local_command":
-            local_options = config.summarization.local_command
-            adapter_kwargs = {
-                "command": local_options.command,
-                "environment": local_options.environment,
-            }
-
+        adapter_kwargs = configured_adapter_options(config.summarization)
         adapter = get_adapter(adapter_name, **adapter_kwargs)
         if not adapter.is_available():
-            console.print(f"[yellow]  Summarization adapter '{adapter_name}' not available[/yellow]")
+            console.print(
+                f"[yellow]  Summarization adapter '{adapter_name}' not available[/yellow]"
+            )
             update_stage_status(manifest, "summarize", "skipped")
             return manifest
 
@@ -796,6 +788,9 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
         summary_path.write_text(
             json.dumps(result.data, indent=2, ensure_ascii=False),
             encoding="utf-8",
+        )
+        manifest["stages"]["summarize"]["provider"] = summarizer_provenance(
+            config.summarization
         )
 
         update_stage_status(manifest, "summarize", "completed")
@@ -816,9 +811,7 @@ def _format_summary_transcript(segments: list[dict]) -> str:
         timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         segment_id = segment.get("id") or f"seg-{index:06d}"
         speaker = f" [{segment['speaker']}]" if segment.get("speaker") else ""
-        transcript_lines.append(
-            f"[{segment_id}] [{timestamp}]{speaker} {segment['text']}"
-        )
+        transcript_lines.append(f"[{segment_id}] [{timestamp}]{speaker} {segment['text']}")
     return "\n".join(transcript_lines)
 
 
@@ -866,7 +859,13 @@ def _run_render(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> di
         raise
 
 
-def _run_finalize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, source: Path, copy_to_input: bool = False) -> dict:
+def _run_finalize(
+    job_dir: Path,
+    manifest: dict,
+    config: MeetingNotesConfig,
+    source: Path,
+    copy_to_input: bool = False,
+) -> dict:
     """Stage: Finalize recording and note filenames."""
     update_stage_status(manifest, "finalize", "running")
     try:
@@ -933,7 +932,9 @@ def _run_finalize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, sou
                 manifest["source"]["finalized_path"] = str(new_path)
             else:
                 # managed_copy: copy to finalized dir
-                target_recording = resolve_collision(target_recording, policy=config.naming.collision_policy)
+                target_recording = resolve_collision(
+                    target_recording, policy=config.naming.collision_policy
+                )
                 shutil.copy2(source_in_job, target_recording)
                 console.print(f"  Copied: -> {target_recording.name}")
 
@@ -942,7 +943,9 @@ def _run_finalize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, sou
         if minutes_src.exists():
             target_minutes = job_dir / "output" / "finalized" / filenames["minutes"]
             target_minutes.parent.mkdir(parents=True, exist_ok=True)
-            target_minutes = resolve_collision(target_minutes, policy=config.naming.collision_policy)
+            target_minutes = resolve_collision(
+                target_minutes, policy=config.naming.collision_policy
+            )
             shutil.copy2(minutes_src, target_minutes)
             console.print(f"  Copied: -> {target_minutes.name}")
 
@@ -951,7 +954,9 @@ def _run_finalize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, sou
         if summary_src.exists():
             target_summary = job_dir / "output" / "finalized" / filenames["json_export"]
             target_summary.parent.mkdir(parents=True, exist_ok=True)
-            target_summary = resolve_collision(target_summary, policy=config.naming.collision_policy)
+            target_summary = resolve_collision(
+                target_summary, policy=config.naming.collision_policy
+            )
             shutil.copy2(summary_src, target_summary)
             console.print(f"  Copied: -> {target_summary.name}")
 
@@ -1029,7 +1034,7 @@ def run_merge(job_dir: str, config_path: str | None = None) -> None:
     template = Path(job_dir).resolve() / "speakers.yaml"
     if template.exists():
         console.print(f"Speaker template: {template}")
-        console.print(f"Next: uv run meeting-notes speakers apply \"{Path(job_dir).resolve()}\"")
+        console.print(f'Next: uv run meeting-notes speakers apply "{Path(job_dir).resolve()}"')
 
 
 def run_summarize(job_dir: str, config_path: str | None = None) -> None:
@@ -1062,6 +1067,7 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
         return
 
     import json
+
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     short_title = sanitize_short_title(summary.get("short_title", "meeting"))
@@ -1069,7 +1075,9 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
     original_ext = Path(manifest.get("source", {}).get("original_filename", ".m4a")).suffix
 
     filenames = generate_filenames(
-        date, short_title, original_ext,
+        date,
+        short_title,
+        original_ext,
         recording_template=config.naming.recording_template,
         minutes_template=config.naming.minutes_template,
     )

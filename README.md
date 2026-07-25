@@ -144,6 +144,11 @@ diarization:
 summarization:
   enabled: true
   backend: codex                 # codex, opencode, mimo, claude, local_command
+  codex:
+    model: gpt-5.6-terra         # null inherits the Codex CLI default
+    reasoning_effort: null       # null inherits the Codex CLI default
+  claude:
+    model: sonnet                # floating alias; null inherits Claude settings
 ```
 
 ## ASR Backends
@@ -167,6 +172,37 @@ The default `whisper_cpp` backend uses a pre-built Windows binary from [whisper.
 | `local_command` | `backend: local_command` | Any custom CLI |
 
 Set `summarization.enabled: false` to skip summarization (transcript-only mode).
+
+### Codex and Claude model selection
+
+`meeting-notes` passes configured models through each provider's native
+`--model` option. A null value omits that option and lets the provider CLI,
+user settings, and built-in defaults choose.
+
+For routine transcript summarization, the recommended economical presets are:
+
+```yaml
+summarization:
+  backend: codex
+  codex:
+    model: gpt-5.6-terra
+    reasoning_effort: null
+```
+
+or:
+
+```yaml
+summarization:
+  backend: claude
+  claude:
+    model: sonnet
+```
+
+Use `gpt-5.6-sol` or `opus` for quality-first runs. Claude's `sonnet` and
+`opus` names are provider-supported floating aliases. Codex model names should
+use documented full IDs such as `gpt-5.6-terra`; bare `terra` is not a
+documented Codex alias. Set Codex `reasoning_effort` explicitly when stable
+behavior matters, or leave it null to inherit the provider default.
 
 ## Speaker Diarization
 

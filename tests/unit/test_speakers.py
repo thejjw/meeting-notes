@@ -136,6 +136,19 @@ def test_disabled_mode_preserves_template_and_can_switch_back(tmp_path: Path) ->
     assert states == ["superseded", "active"]
 
 
+def test_reapply_reuses_recording_from_active_generation(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    config = MeetingNotesConfig(summarization={"enabled": False})
+    first = apply_speakers(job, None, config, without_diarization=True)
+    (job / "source" / "recording.m4a").unlink()
+
+    second = apply_speakers(job, None, config, without_diarization=True)
+
+    first_recording = next(Path(path) for path in first["managed_paths"] if path.endswith(".m4a"))
+    second_recording = next(Path(path) for path in second["managed_paths"] if path.endswith(".m4a"))
+    assert first_recording.read_bytes() == second_recording.read_bytes() == b"recording"
+
+
 def test_disabled_summary_prompt_and_identity_fields_are_enforced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

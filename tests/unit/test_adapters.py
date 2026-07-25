@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from meeting_notes.config import MeetingNotesConfig
+from meeting_notes.pipeline import _format_summary_transcript
 from meeting_notes.summarization.adapters import (
     ClaudeCodeAdapter,
     CodexAdapter,
@@ -15,11 +16,12 @@ from meeting_notes.summarization.adapters import (
     MimoCodeAdapter,
     OpenCodeAdapter,
     SummaryResult,
+    configured_adapter_options,
     detect_available_adapters,
     get_adapter,
     register_adapter,
+    summarizer_provenance,
 )
-from meeting_notes.pipeline import _format_summary_transcript
 
 
 class TestSummaryResult:
@@ -134,8 +136,49 @@ def test_codex_transcript_uses_stdin_not_windows_command_line(tmp_path: Path) ->
     assert "--output-schema" in args
     assert "--ignore-user-config" in args
     assert "--ignore-rules" in args
-    assert "model_reasoning_effort=\"high\"" in args
+    assert 'model_reasoning_effort="high"' in args
     assert result.data == {"title": "ok"}
+
+
+def test_provider_options_preserve_null_defaults() -> None:
+    config = MeetingNotesConfig()
+    config.summarization.backend = "codex"
+    assert configured_adapter_options(config.summarization)["model"] is None
+    assert configured_adapter_options(config.summarization)["reasoning_effort"] is None
+    assert summarizer_provenance(config.summarization) == {
+        "backend": "codex",
+        "requested_model": None,
+        "requested_reasoning_effort": None,
+    }
+
+
+def test_claude_configured_model_is_forwarded(tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object):
+        from meeting_notes.subprocess_utils import SubprocessResult
+
+        observed["args"] = args
+        return SubprocessResult(0, '{"title":"ok"}', "", args)
+
+    config = MeetingNotesConfig(summarization={"backend": "claude", "claude": {"model": "sonnet"}})
+    adapter = get_adapter(
+        config.summarization.backend,
+        **configured_adapter_options(config.summarization),
+    )
+    with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+        result = adapter.summarize("transcript", prompt="Summarize.")
+
+    args = observed["args"]
+    assert isinstance(args, list)
+    assert args[:4] == ["claude", "-p", "--model", "sonnet"]
+    assert result.data == {"title": "ok"}
+
+
+def test_claude_null_model_omits_model_flag() -> None:
+    config = MeetingNotesConfig(summarization={"backend": "claude"})
+    options = configured_adapter_options(config.summarization)
+    assert options == {"executable": "claude", "model": None}
 
 
 def test_summary_transcript_includes_stable_evidence_ids() -> None:

@@ -291,24 +291,12 @@ def _summarize(
         raise SpeakerMapError(
             f"Summarization adapter '{backend}' is not allowed with --local-only."
         )
-    from meeting_notes.summarization.adapters import get_adapter
+    from meeting_notes.summarization.adapters import (
+        configured_adapter_options,
+        get_adapter,
+    )
 
-    kwargs: dict[str, Any] = {}
-    if backend in {"codex", "codex_cli"}:
-        options = config.summarization.codex
-        kwargs = {
-            "executable": options.executable,
-            "model": options.model,
-            "reasoning_effort": options.reasoning_effort,
-            "ephemeral": options.ephemeral,
-            "skip_git_repo_check": options.skip_git_repo_check,
-            "ignore_user_config": options.ignore_user_config,
-            "ignore_rules": options.ignore_rules,
-            "extra_args": options.extra_args,
-        }
-    elif backend == "local_command":
-        options = config.summarization.local_command
-        kwargs = {"command": options.command, "environment": options.environment}
+    kwargs = configured_adapter_options(config.summarization)
     adapter = get_adapter(backend, **kwargs)
     if not adapter.is_available():
         raise SpeakerMapError(f"Summarization adapter '{backend}' is not available.")
@@ -354,6 +342,27 @@ def _publish_recording(job_dir: Path, target: Path, manifest: dict[str, Any]) ->
         return None
     source = job_dir / "source" / str(source_name)
     if not source.exists():
+        publications = manifest.get("speaker_publications", {})
+        active_id = publications.get("active_generation")
+        active = next(
+            (
+                generation
+                for generation in publications.get("generations", [])
+                if generation.get("id") == active_id
+            ),
+            None,
+        )
+        extension = Path(str(source_name)).suffix.lower()
+        if active:
+            source = next(
+                (
+                    Path(path)
+                    for path in active.get("managed_paths", [])
+                    if Path(path).is_file() and Path(path).suffix.lower() == extension
+                ),
+                source,
+            )
+    if not source.exists():
         return None
     try:
         os.link(source, target)
@@ -390,6 +399,8 @@ def apply_speakers(
     local_only: bool = False,
     without_diarization: bool = False,
 ) -> dict[str, Any]:
+    from meeting_notes.summarization.adapters import summarizer_provenance
+
     if without_diarization:
         transcript_path, anonymous = _transcript(job_dir)
         transcript_hash = _sha256(transcript_path)
@@ -513,6 +524,7 @@ def apply_speakers(
         "mapping_sha256": map_hash,
         "transcript_sha256": transcript_hash,
         "speaker_resolution": speaker_resolution,
+        "summarizer": summarizer_provenance(config.summarization),
         "managed_paths": managed,
         "external_paths": [],
         "date_source": date_source,

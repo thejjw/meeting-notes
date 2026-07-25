@@ -241,6 +241,13 @@ class CodexConfig(BaseModel):
     extra_args: list[str] = Field(default_factory=list)
 
 
+class ClaudeConfig(BaseModel):
+    """Claude Code CLI-specific summarization options."""
+
+    executable: str = "claude"
+    model: str | None = None
+
+
 class LocalCommandConfig(BaseModel):
     """Local command summarizer options."""
 
@@ -265,6 +272,7 @@ class SummarizationConfig(BaseModel):
     retries: int = 2
     timeout_seconds: int = 1800
     codex: CodexConfig = Field(default_factory=CodexConfig)
+    claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     local_command: LocalCommandConfig = Field(default_factory=LocalCommandConfig)
 
 

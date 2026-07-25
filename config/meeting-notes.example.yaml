@@ -160,13 +160,16 @@ summarization:
   timeout_seconds: 1800
   codex:
     executable: codex
-    model: null
+    model: gpt-5.6-terra
     reasoning_effort: null
     ephemeral: true
     skip_git_repo_check: true
     ignore_user_config: false
     ignore_rules: false
     extra_args: []
+  claude:
+    executable: claude
+    model: sonnet
   local_command:
     command: []
     environment: {}

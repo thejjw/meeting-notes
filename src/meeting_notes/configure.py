@@ -50,7 +50,9 @@ def run_configure(
 ) -> None:
     """Run the configuration wizard or create safe defaults."""
     if no_configure:
-        console.print("[red]Configuration required. Run 'meeting-notes configure' or use '--accept-defaults'.[/red]")
+        console.print(
+            "[red]Configuration required. Run 'meeting-notes configure' or use '--accept-defaults'.[/red]"
+        )
         raise typer.Exit(1)
 
     if show_detected:
@@ -97,9 +99,68 @@ def _create_safe_defaults(
     save_config(config, target)
     console.print(f"[green]Safe CPU configuration written to: {target}[/green]")
     if provision:
-        console.print("Runtime and model verified. You can now run: meeting-notes process <audio-file>")
+        console.print(
+            "Runtime and model verified. You can now run: meeting-notes process <audio-file>"
+        )
     else:
         _print_provisioning_commands(config, target)
+
+
+def _prompt_summarization_config(
+    diag: SystemDiagnostics,
+) -> tuple[str, str | None, str | None]:
+    """Prompt for an installed summarizer and its requested model."""
+    available: list[tuple[str, str]] = []
+    if diag.tools.codex_available:
+        available.append(("codex", "Codex CLI"))
+    if diag.tools.claude_available:
+        available.append(("claude", "Claude Code"))
+    if not available:
+        console.print("[dim]Codex and Claude CLIs not detected. Summarization disabled.[/dim]")
+        return "none", None, None
+
+    console.print(
+        "[yellow]Summarization sends transcript text to the selected AI provider.[/yellow]"
+    )
+    for index, (_, label) in enumerate(available, 1):
+        console.print(f"  [{index}] {label}")
+    disabled_index = len(available) + 1
+    console.print(f"  [{disabled_index}] Disabled (default)")
+    choice = typer.prompt("Select summarization backend", default=str(disabled_index), type=int)
+    if choice == disabled_index:
+        return "none", None, None
+    if choice < 1 or choice > len(available):
+        console.print("[red]Invalid summarization backend.[/red]")
+        raise typer.Exit(1)
+
+    backend = available[choice - 1][0]
+    if backend == "codex":
+        choices = [
+            ("gpt-5.6-terra", "GPT-5.6 Terra (recommended: balanced cost and quality)"),
+            ("gpt-5.6-sol", "GPT-5.6 Sol (flagship quality)"),
+            (None, "Provider default"),
+            ("custom", "Custom model ID"),
+        ]
+    else:
+        choices = [
+            ("sonnet", "Latest Sonnet (recommended: balanced cost and quality)"),
+            ("opus", "Latest Opus (flagship quality)"),
+            (None, "Provider default"),
+            ("custom", "Custom model ID"),
+        ]
+    for index, (_, label) in enumerate(choices, 1):
+        console.print(f"  [{index}] {label}")
+    model_choice = typer.prompt("Select summarization model", default="1", type=int)
+    if model_choice < 1 or model_choice > len(choices):
+        console.print("[red]Invalid summarization model.[/red]")
+        raise typer.Exit(1)
+    model = choices[model_choice - 1][0]
+    if model == "custom":
+        model = typer.prompt("Model ID").strip()
+        if not model:
+            console.print("[red]Model ID cannot be blank.[/red]")
+            raise typer.Exit(1)
+    return backend, model, None
 
 
 def _run_interactive_wizard(config_path: str | None = None) -> None:
@@ -115,7 +176,9 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     backend_options = _build_backend_options(diag)
     for i, opt in enumerate(backend_options, 1):
         compat = opt["compatibility"]
-        compat_color = "green" if compat == "available" else ("yellow" if "warning" in compat else "red")
+        compat_color = (
+            "green" if compat == "available" else ("yellow" if "warning" in compat else "red")
+        )
         console.print(f"  [{i}] {opt['name']}")
         console.print(f"      Backend: {opt['backend']}")
         console.print(f"      Model: {opt['model']}")
@@ -165,12 +228,10 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
 
     # Step 5: Summarization
     console.print("\n[bold]Summarization[/bold]\n")
-    if diag.tools.codex_available:
-        console.print("[yellow]Codex CLI detected. Note: summarization sends transcript text to OpenAI.[/yellow]")
-        enable_summarization = typer.confirm("Enable Codex CLI summarization?", default=False)
-    else:
-        console.print("[dim]Codex CLI not detected. Summarization disabled.[/dim]")
-        enable_summarization = False
+    summarization_backend, summarization_model, reasoning_effort = _prompt_summarization_config(
+        diag
+    )
+    enable_summarization = summarization_backend != "none"
 
     # Step 6: Naming mode
     console.print("\n[bold]File naming[/bold]\n")
@@ -201,7 +262,14 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         },
         summarization={
             "enabled": enable_summarization,
-            "backend": "codex" if enable_summarization else "none",
+            "backend": summarization_backend,
+            "codex": {
+                "model": summarization_model if summarization_backend == "codex" else None,
+                "reasoning_effort": reasoning_effort,
+            },
+            "claude": {
+                "model": summarization_model if summarization_backend == "claude" else None,
+            },
         },
         naming={
             "recording_mode": naming_mode,
@@ -217,6 +285,17 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     console.print(f"  Language: {config.asr.language}")
     console.print(f"  Diarization: {'enabled' if config.diarization.enabled else 'disabled'}")
     console.print(f"  Summarization: {'enabled' if config.summarization.enabled else 'disabled'}")
+    if config.summarization.enabled:
+        model = (
+            config.summarization.codex.model
+            if config.summarization.backend == "codex"
+            else config.summarization.claude.model
+        )
+        console.print(f"  Summarization backend: {config.summarization.backend}")
+        console.print(f"  Summarization model: {model or 'provider default'}")
+        if config.summarization.backend == "codex":
+            effort = config.summarization.codex.reasoning_effort
+            console.print(f"  Reasoning effort: {effort or 'provider default'}")
     console.print(f"  Naming mode: {config.naming.recording_mode}")
     console.print(f"  Config path: {target}")
     console.print()
@@ -234,7 +313,9 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
             _provision_model(config, yes=False, interactive=True)
     except Exception as exc:
         console.print(f"[red]Provisioning failed: {exc}[/red]")
-        console.print("[yellow]The previous configuration and installs were left unchanged.[/yellow]")
+        console.print(
+            "[yellow]The previous configuration and installs were left unchanged.[/yellow]"
+        )
         raise typer.Exit(1)
 
     save_config(config, target)
@@ -246,9 +327,9 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     if config.diarization.enabled:
         console.print(
             "\nSpeaker diarization requires one guided browser authorization/download step:\n"
-            f"  uv run meeting-notes diarization setup --config \"{target}\"\n"
+            f'  uv run meeting-notes diarization setup --config "{target}"\n'
             "Then verify with:\n"
-            f"  uv run meeting-notes doctor --config \"{target}\""
+            f'  uv run meeting-notes doctor --config "{target}"'
         )
     elif provision_runtime and provision_model:
         console.print("Run: meeting-notes process <audio-file>")
@@ -259,70 +340,80 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
     options = []
 
     # Safe CPU (always available)
-    options.append({
-        "name": "Safe CPU (default)",
-        "backend": "whisper.cpp CPU",
-        "model": "medium",
-        "memory": "~2.1 GB",
-        "recommended_ram": ">= 4 GB",
-        "compatibility": "available",
-        "notes": "slowest but most portable and least driver-dependent",
-        "profile": "safe-cpu",
-        "runtime_device": "cpu",
-        "runtime_asr_backend": "whisper_cpp",
-    })
+    options.append(
+        {
+            "name": "Safe CPU (default)",
+            "backend": "whisper.cpp CPU",
+            "model": "medium",
+            "memory": "~2.1 GB",
+            "recommended_ram": ">= 4 GB",
+            "compatibility": "available",
+            "notes": "slowest but most portable and least driver-dependent",
+            "profile": "safe-cpu",
+            "runtime_device": "cpu",
+            "runtime_asr_backend": "whisper_cpp",
+        }
+    )
 
     # Vulkan
     vulkan_compat = "detected, not yet validated" if diag.gpu.vulkan_devices else "not detected"
     vulkan_notes = ""
     if not diag.gpu.vulkan_devices:
         vulkan_notes = "Vulkan devices not found; requires Vulkan-capable GPU and driver"
-    options.append({
-        "name": "Vulkan acceleration",
-        "backend": "whisper.cpp Vulkan",
-        "model": "large-v3",
-        "memory": "~3.9 GB + runtime headroom",
-        "recommended_ram": ">= 8 GB",
-        "compatibility": vulkan_compat,
-        "notes": vulkan_notes,
-        "profile": "vulkan",
-        "runtime_device": "vulkan",
-        "runtime_asr_backend": "whisper_cpp",
-    })
+    options.append(
+        {
+            "name": "Vulkan acceleration",
+            "backend": "whisper.cpp Vulkan",
+            "model": "large-v3",
+            "memory": "~3.9 GB + runtime headroom",
+            "recommended_ram": ">= 8 GB",
+            "compatibility": vulkan_compat,
+            "notes": vulkan_notes,
+            "profile": "vulkan",
+            "runtime_device": "vulkan",
+            "runtime_asr_backend": "whisper_cpp",
+        }
+    )
 
     # ROCm/HIP
     rocm_compat = "detected" if diag.gpu.rocm_architectures else "unavailable in this environment"
     rocm_notes = ""
     if not diag.gpu.rocm_architectures:
         rocm_notes = "rocminfo and a HIP-enabled whisper.cpp build were not found"
-    options.append({
-        "name": "AMD ROCm/HIP",
-        "backend": "whisper.cpp HIP/ROCm",
-        "model": "large-v3",
-        "memory": "~3.9 GB + runtime headroom",
-        "recommended_ram": ">= 8 GB",
-        "compatibility": rocm_compat,
-        "notes": rocm_notes,
-        "profile": "amd-rocm",
-        "runtime_device": "rocm",
-        "runtime_asr_backend": "whisper_cpp",
-    })
+    options.append(
+        {
+            "name": "AMD ROCm/HIP",
+            "backend": "whisper.cpp HIP/ROCm",
+            "model": "large-v3",
+            "memory": "~3.9 GB + runtime headroom",
+            "recommended_ram": ">= 8 GB",
+            "compatibility": rocm_compat,
+            "notes": rocm_notes,
+            "profile": "amd-rocm",
+            "runtime_device": "rocm",
+            "runtime_asr_backend": "whisper_cpp",
+        }
+    )
 
     # CUDA
     cuda_compat = "available" if diag.gpu.cuda_available else "not available"
     cuda_notes = "" if diag.gpu.cuda_available else "NVIDIA CUDA not detected"
-    options.append({
-        "name": "NVIDIA CUDA",
-        "backend": "whisper.cpp CUDA or faster-whisper",
-        "model": "large-v3",
-        "memory": f"~{diag.gpu.vram_gb:.1f} GB VRAM detected" if diag.gpu.cuda_available else "~10 GB VRAM needed",
-        "recommended_ram": ">= 12 GB",
-        "compatibility": cuda_compat,
-        "notes": cuda_notes,
-        "profile": "nvidia-cuda",
-        "runtime_device": "cuda",
-        "runtime_asr_backend": "whisper_cpp",
-    })
+    options.append(
+        {
+            "name": "NVIDIA CUDA",
+            "backend": "whisper.cpp CUDA or faster-whisper",
+            "model": "large-v3",
+            "memory": f"~{diag.gpu.vram_gb:.1f} GB VRAM detected"
+            if diag.gpu.cuda_available
+            else "~10 GB VRAM needed",
+            "recommended_ram": ">= 12 GB",
+            "compatibility": cuda_compat,
+            "notes": cuda_notes,
+            "profile": "nvidia-cuda",
+            "runtime_device": "cuda",
+            "runtime_asr_backend": "whisper_cpp",
+        }
+    )
 
     return options
 
@@ -344,14 +435,16 @@ def _build_model_options(diag: SystemDiagnostics, device: str = "cpu") -> list[d
             fit_status, _ = check_model_fit(est, diag)
             fit = fit_status
 
-        options.append({
-            "name": name,
-            "accuracy": accuracy,
-            "download": f"{download} [official reference]",
-            "runtime_memory": f"{runtime_mem} [official reference]",
-            "recommended_ram": f"{recommended} [estimated]",
-            "fit": fit,
-        })
+        options.append(
+            {
+                "name": name,
+                "accuracy": accuracy,
+                "download": f"{download} [official reference]",
+                "runtime_memory": f"{runtime_mem} [official reference]",
+                "recommended_ram": f"{recommended} [estimated]",
+                "fit": fit,
+            }
+        )
 
     return options
 
@@ -401,7 +494,9 @@ def config_edit_cmd(config_path: str | None = None) -> None:
 
     path = _resolve_config_path(config_path)
     if not path:
-        console.print("[yellow]No config file to edit. Run 'meeting-notes configure' first.[/yellow]")
+        console.print(
+            "[yellow]No config file to edit. Run 'meeting-notes configure' first.[/yellow]"
+        )
         raise typer.Exit(1)
 
     editor = os.environ.get("EDITOR", os.environ.get("VISUAL", "notepad"))
@@ -463,9 +558,7 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
     diarization_model_path = (
         Path(config.diarization.model_path) if config.diarization.model_path else None
     )
-    local_diarization_model_ready = bool(
-        diarization_model_path and diarization_model_path.exists()
-    )
+    local_diarization_model_ready = bool(diarization_model_path and diarization_model_path.exists())
     try:
         from importlib.metadata import version
 
@@ -625,9 +718,7 @@ def _run_smoke_test(config_path: str | None) -> dict[str, object]:
         vulkan_seen = any(
             marker in output.lower() for marker in ("vulkan", "ggml_vk", "vk_instance")
         )
-        success = result.returncode == 0 and (
-            config.runtime.device != "vulkan" or vulkan_seen
-        )
+        success = result.returncode == 0 and (config.runtime.device != "vulkan" or vulkan_seen)
         detail = "model loaded successfully"
         if config.runtime.device == "vulkan" and not vulkan_seen:
             detail = "whisper.cpp output did not confirm Vulkan initialization"
@@ -668,9 +759,7 @@ def run_doctor(
                 f"{'ready' if configured['executable_runnable'] else 'not runnable'}"
                 f"[/{runnable_style}]"
             )
-            console.print(
-                f"  Executable: [{exe_style}]{configured['executable']}[/{exe_style}]"
-            )
+            console.print(f"  Executable: [{exe_style}]{configured['executable']}[/{exe_style}]")
             if configured["manifest"] is None:
                 console.print("  [yellow]Manifest: user-supplied/unmanaged executable[/yellow]")
             elif not configured["manifest_backend_matches"]:
@@ -705,8 +794,7 @@ def run_doctor(
                 console.print(f"  Transcript evidence: {latest.get('path')}")
             if configured["diarization_enabled"]:
                 ready = configured["pyannote_installed"] and (
-                    configured["hf_token_ready"]
-                    or configured["local_diarization_model_ready"]
+                    configured["hf_token_ready"] or configured["local_diarization_model_ready"]
                 )
                 console.print(
                     f"  Diarization: "
@@ -732,8 +820,7 @@ def run_doctor(
                         "ready" if configured["local_diarization_model_ready"] else "missing"
                     )
                     console.print(
-                        f"    Local model: {local_status} "
-                        f"({configured['diarization_model_path']})"
+                        f"    Local model: {local_status} ({configured['diarization_model_path']})"
                     )
         if smoke is not None:
             style = "green" if smoke["success"] else "red"
@@ -749,7 +836,9 @@ def run_doctor(
             and configured.get("executable_runnable")
         )
         if not diag.tools.whisper_cpp_available and not configured_runtime_ready:
-            console.print("  [yellow]Install whisper.cpp or build from source: https://github.com/ggerganov/whisper.cpp[/yellow]")
+            console.print(
+                "  [yellow]Install whisper.cpp or build from source: https://github.com/ggerganov/whisper.cpp[/yellow]"
+            )
         elif not diag.tools.whisper_cpp_available and configured_runtime_ready:
             console.print(
                 "  [green]No PATH installation is needed; the configured managed "
@@ -760,7 +849,9 @@ def run_doctor(
             for line in _diarization_recommendations(config, configured):
                 console.print(line)
         if not diag.tools.codex_available:
-            console.print("  [dim]Codex CLI not installed. Summarization disabled. Install: https://github.com/openai/codex[/dim]")
+            console.print("  [dim]Codex CLI not installed: https://github.com/openai/codex[/dim]")
+        if not diag.tools.claude_available:
+            console.print("  [dim]Claude Code not installed: https://code.claude.com/docs[/dim]")
         if not diag.gpu.available:
             console.print("  [dim]No GPU acceleration detected. Using CPU mode.[/dim]")
 
@@ -793,10 +884,23 @@ def _diagnostics_to_dict(diag: SystemDiagnostics) -> dict:
             "rocm_architectures": diag.gpu.rocm_architectures,
         },
         "tools": {
-            "ffmpeg": {"available": diag.tools.ffmpeg_available, "version": diag.tools.ffmpeg_version},
-            "ffprobe": {"available": diag.tools.ffprobe_available, "version": diag.tools.ffprobe_version},
-            "whisper_cpp": {"available": diag.tools.whisper_cpp_available, "version": diag.tools.whisper_cpp_version},
+            "ffmpeg": {
+                "available": diag.tools.ffmpeg_available,
+                "version": diag.tools.ffmpeg_version,
+            },
+            "ffprobe": {
+                "available": diag.tools.ffprobe_available,
+                "version": diag.tools.ffprobe_version,
+            },
+            "whisper_cpp": {
+                "available": diag.tools.whisper_cpp_available,
+                "version": diag.tools.whisper_cpp_version,
+            },
             "codex": {"available": diag.tools.codex_available, "version": diag.tools.codex_version},
+            "claude": {
+                "available": diag.tools.claude_available,
+                "version": diag.tools.claude_version,
+            },
         },
     }
 
@@ -807,7 +911,9 @@ def run_resources_show(model: str | None = None, device: str | None = None) -> N
     console.print(format_diagnostics_table(diag))
     console.print()
 
-    models = ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"] if not model else [model]
+    models = (
+        ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"] if not model else [model]
+    )
 
     table = Table(title="Resource Estimates (whisper.cpp)")
     table.add_column("Model", style="cyan")
@@ -820,7 +926,11 @@ def run_resources_show(model: str | None = None, device: str | None = None) -> N
         est = get_resource_estimate(m, "whisper_cpp")
         if est:
             fit_status, _ = check_model_fit(est, diag)
-            fit_style = "green" if fit_status == "available" else ("yellow" if "warning" in fit_status else "red")
+            fit_style = (
+                "green"
+                if fit_status == "available"
+                else ("yellow" if "warning" in fit_status else "red")
+            )
             table.add_row(
                 m,
                 f"{est.disk_size_mib} MiB",
@@ -840,7 +950,9 @@ def run_models_list() -> None:
     for name in ["tiny", "base", "small", "medium", "large-v3", "large-v3-turbo"]:
         est = get_resource_estimate(name, "whisper_cpp")
         if est:
-            console.print(f"  {name:20s}  {est.disk_size_mib:>6} MiB  ~{est.reference_memory_mb} MB RAM")
+            console.print(
+                f"  {name:20s}  {est.disk_size_mib:>6} MiB  ~{est.reference_memory_mb} MB RAM"
+            )
         else:
             console.print(f"  {name:20s}  [dim]metadata unknown[/dim]")
 
@@ -870,9 +982,7 @@ def _provision_runtime(config: MeetingNotesConfig, version: str = "v1.9.1") -> P
     return executable
 
 
-def _provision_model(
-    config: MeetingNotesConfig, *, yes: bool, interactive: bool = False
-) -> Path:
+def _provision_model(config: MeetingNotesConfig, *, yes: bool, interactive: bool = False) -> Path:
     from meeting_notes.artifacts import MODEL_ARTIFACTS
     from meeting_notes.models import download_model
 
@@ -905,12 +1015,10 @@ def _provision_config(config: MeetingNotesConfig, *, yes: bool) -> None:
 def _print_provisioning_commands(config: MeetingNotesConfig, target: Path) -> None:
     console.print("\n[bold]Provisioning still required[/bold]")
     console.print(
-        f"  meeting-notes runtime install --device {config.runtime.device} --config \"{target}\""
+        f'  meeting-notes runtime install --device {config.runtime.device} --config "{target}"'
     )
     suffix = " --yes" if config.asr.model in {"medium", "large-v3", "large-v3-turbo"} else ""
-    console.print(
-        f"  meeting-notes models download {config.asr.model} --config \"{target}\"{suffix}"
-    )
+    console.print(f'  meeting-notes models download {config.asr.model} --config "{target}"{suffix}')
 
 
 def run_models_status(output_json: bool = False) -> None:
@@ -948,7 +1056,9 @@ def run_models_info(model: str, backend: str = "whisper_cpp") -> None:
         console.print(f"Confidence: {est.confidence}")
         console.print(f"Source: {est.source}")
     else:
-        console.print(f"[yellow]No resource data for model '{model}' with backend '{backend}'[/yellow]")
+        console.print(
+            f"[yellow]No resource data for model '{model}' with backend '{backend}'[/yellow]"
+        )
 
 
 def run_models_download(

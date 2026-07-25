@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,13 +10,14 @@ import pytest
 import yaml
 
 from meeting_notes.config import (
-    DEFAULT_CONFIG_PATH,
     MeetingNotesConfig,
     SetupConfig,
     load_config,
     save_config,
 )
+from meeting_notes.configure import _prompt_summarization_config
 from meeting_notes.errors import ConfigNotFoundError, ConfigValidationError
+from meeting_notes.resources import SystemDiagnostics
 
 
 class TestConfigModels:
@@ -151,3 +151,38 @@ class TestProfiles:
             data = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
             assert data["runtime"]["device"] == "vulkan"
             assert data["asr"]["model"] == "large-v3"
+
+
+class TestSummarizationWizard:
+    def test_recommends_terra_for_codex(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.codex_available = True
+        with patch("typer.prompt", side_effect=[1, 1]):
+            assert _prompt_summarization_config(diagnostics) == (
+                "codex",
+                "gpt-5.6-terra",
+                None,
+            )
+
+    def test_recommends_sonnet_for_claude(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.claude_available = True
+        with patch("typer.prompt", side_effect=[1, 1]):
+            assert _prompt_summarization_config(diagnostics) == (
+                "claude",
+                "sonnet",
+                None,
+            )
+
+    def test_provider_default_is_null(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.codex_available = True
+        with patch("typer.prompt", side_effect=[1, 3]):
+            assert _prompt_summarization_config(diagnostics) == ("codex", None, None)
+
+    def test_disabled_remains_default_choice(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.codex_available = True
+        diagnostics.tools.claude_available = True
+        with patch("typer.prompt", return_value=3):
+            assert _prompt_summarization_config(diagnostics) == ("none", None, None)

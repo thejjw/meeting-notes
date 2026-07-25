@@ -66,6 +66,8 @@ class ToolDetection:
     whisper_cpp_available: bool = False
     codex_version: str = ""
     codex_available: bool = False
+    claude_version: str = ""
+    claude_available: bool = False
     git_version: str = ""
     git_available: bool = False
 
@@ -206,7 +208,13 @@ def _detect_rocm() -> list[str]:
 
 def _detect_cuda() -> tuple[bool, str]:
     """Try to detect NVIDIA CUDA."""
-    ok, out = _run_command(["nvidia-smi", "--query-gpu=name,memory.total,memory.free,driver_version", "--format=csv,noheader"])
+    ok, out = _run_command(
+        [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,memory.free,driver_version",
+            "--format=csv,noheader",
+        ]
+    )
     return ok, out
 
 
@@ -273,7 +281,9 @@ def detect_system() -> SystemDiagnostics:
     # Unified memory heuristic: if AMD APU with no discrete GPU
     if "ryzen" in diag.cpu.model_name.lower() and not cuda_ok:
         diag.memory.is_unified_memory = True
-        diag.memory.notes = "Unified memory detected (AMD APU). RAM and VRAM are not separate pools."
+        diag.memory.notes = (
+            "Unified memory detected (AMD APU). RAM and VRAM are not separate pools."
+        )
 
     # Tool detection
     ff_ok, ff_ver = _detect_tool_version(["ffmpeg"])
@@ -291,6 +301,10 @@ def detect_system() -> SystemDiagnostics:
     cx_ok, cx_ver = _detect_tool_version(["codex"])
     diag.tools.codex_available = cx_ok
     diag.tools.codex_version = cx_ver
+
+    cl_ok, cl_ver = _detect_tool_version(["claude"])
+    diag.tools.claude_available = cl_ok
+    diag.tools.claude_version = cl_ver
 
     g_ok, g_ver = _detect_tool_version(["git"])
     diag.tools.git_available = g_ok
@@ -428,9 +442,7 @@ def get_resource_estimate(model: str, backend: str = "whisper_cpp") -> ResourceE
     return catalog.get(model)
 
 
-def check_model_fit(
-    estimate: ResourceEstimate, diag: SystemDiagnostics
-) -> tuple[str, str]:
+def check_model_fit(estimate: ResourceEstimate, diag: SystemDiagnostics) -> tuple[str, str]:
     """Check if a model fits on the detected machine.
 
     Returns (status, reason) where status is one of:
@@ -453,7 +465,10 @@ def check_model_fit(
             f"need at least {estimate.reference_memory_mb / 1024:.1f} GB for model.",
         )
 
-    return "available", f"Model should fit: {diag.memory.available_ram_gb:.1f} GB available, need {estimate.recommended_free_ram_gb:.1f} GB recommended."
+    return (
+        "available",
+        f"Model should fit: {diag.memory.available_ram_gb:.1f} GB available, need {estimate.recommended_free_ram_gb:.1f} GB recommended.",
+    )
 
 
 def format_diagnostics_table(diag: SystemDiagnostics) -> str:
@@ -467,7 +482,9 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
     lines.append(f"  OS: {os_str}")
 
     # CPU
-    lines.append(f"  CPU: {diag.cpu.model_name}, {diag.cpu.physical_cores} cores / {diag.cpu.logical_cores} threads")
+    lines.append(
+        f"  CPU: {diag.cpu.model_name}, {diag.cpu.physical_cores} cores / {diag.cpu.logical_cores} threads"
+    )
 
     # RAM
     lines.append(
@@ -487,19 +504,37 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
         lines.append(f"  Vulkan: not available in this environment")
 
     if diag.gpu.rocm_architectures:
-        lines.append(f"  ROCm/HIP: detected architectures: {', '.join(diag.gpu.rocm_architectures)}")
+        lines.append(
+            f"  ROCm/HIP: detected architectures: {', '.join(diag.gpu.rocm_architectures)}"
+        )
     else:
         lines.append(f"  ROCm/HIP: not available in this environment")
 
-    if not diag.gpu.cuda_available and not diag.gpu.vulkan_devices and not diag.gpu.rocm_architectures:
+    if (
+        not diag.gpu.cuda_available
+        and not diag.gpu.vulkan_devices
+        and not diag.gpu.rocm_architectures
+    ):
         lines.append(f"  CUDA: not available")
 
     # Tools
     lines.append("")
     lines.append("External tools")
-    lines.append(f"  FFmpeg: {'available' if diag.tools.ffmpeg_available else 'not found'} {diag.tools.ffmpeg_version}")
-    lines.append(f"  FFprobe: {'available' if diag.tools.ffprobe_available else 'not found'} {diag.tools.ffprobe_version}")
-    lines.append(f"  whisper.cpp on PATH: {'available' if diag.tools.whisper_cpp_available else 'not found'} {diag.tools.whisper_cpp_version}")
-    lines.append(f"  Codex CLI: {'available' if diag.tools.codex_available else 'not found'} {diag.tools.codex_version}")
+    lines.append(
+        f"  FFmpeg: {'available' if diag.tools.ffmpeg_available else 'not found'} {diag.tools.ffmpeg_version}"
+    )
+    lines.append(
+        f"  FFprobe: {'available' if diag.tools.ffprobe_available else 'not found'} {diag.tools.ffprobe_version}"
+    )
+    lines.append(
+        f"  whisper.cpp on PATH: {'available' if diag.tools.whisper_cpp_available else 'not found'} {diag.tools.whisper_cpp_version}"
+    )
+    lines.append(
+        f"  Codex CLI: {'available' if diag.tools.codex_available else 'not found'} {diag.tools.codex_version}"
+    )
+    lines.append(
+        f"  Claude Code: {'available' if diag.tools.claude_available else 'not found'} "
+        f"{diag.tools.claude_version}"
+    )
 
     return "\n".join(lines)
