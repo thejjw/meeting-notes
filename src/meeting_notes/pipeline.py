@@ -40,6 +40,7 @@ from meeting_notes.publication import (
     render_transcript_variants,
     write_run_report,
 )
+from meeting_notes.timing import build_time_estimate_lines
 from meeting_notes.transcript.render import render_all_formats
 from meeting_notes.transcript.models import TranscriptDocument, TranscriptSegment
 
@@ -289,6 +290,7 @@ def run_pipeline(
             try:
                 if stage == "prepare":
                     manifest = _run_prepare(source, job_dir, manifest, config)
+                    _print_time_estimate(config, manifest, stages, job_dir)
                 elif stage == "transcribe":
                     manifest = _run_transcribe(job_dir, manifest, config)
                 elif stage == "diarize":
@@ -380,6 +382,28 @@ def _print_dry_run(
         console.print(f"  [{i}/{len(stages)}] {stage}")
 
 
+def _print_time_estimate(
+    config: MeetingNotesConfig,
+    manifest: dict,
+    stages: list[str],
+    job_dir: Path,
+) -> None:
+    """Print an ASR/diarization ETA based on this machine's own timing history."""
+    audio_seconds = manifest.get("source", {}).get("duration_seconds")
+    lines = build_time_estimate_lines(
+        config,
+        stages,
+        audio_seconds,
+        data_dir=Path(config.project.data_dir),
+        exclude_job_dir=job_dir,
+    )
+    if not lines:
+        return
+    console.print(f"\n[bold]{lines[0]}[/bold]")
+    for line in lines[1:]:
+        console.print(line)
+
+
 def _run_prepare(
     source: Path,
     job_dir: Path,
@@ -449,8 +473,15 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
                 "model": config.asr.model,
                 "model_path": config.asr.model_path,
             }
-            manifest["stages"]["transcribe"]["runtime"] = runtime_identity
             log.info("asr.runtime_selected", **runtime_identity)
+        else:
+            runtime_identity = {
+                "backend": config.runtime.asr_backend,
+                "device": config.runtime.device,
+                "model": config.asr.model,
+                "model_path": config.asr.model_path,
+            }
+        manifest["stages"]["transcribe"]["runtime"] = runtime_identity
 
         backend = get_backend(config.runtime.asr_backend, **backend_kwargs)
 
@@ -573,6 +604,12 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
         normalized = job_dir / "audio" / "normalized.wav"
         if not normalized.exists():
             raise FileNotFoundError(f"Normalized audio not found: {normalized}")
+
+        manifest["stages"]["diarize"]["runtime"] = {
+            "backend": config.diarization.backend,
+            "device": config.diarization.device,
+            "model": config.diarization.model,
+        }
 
         # Import and try to load pyannote
         try:

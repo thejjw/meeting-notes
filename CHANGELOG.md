@@ -17,10 +17,17 @@ All notable changes to meeting-notes will be documented in this file.
   meetings.
 - `user_clarifications` schema/prompt/render fields: `heard_text`, `user_answer`,
   `resolved`.
+- `process` now prints an ASR/diarization time estimate before those stages run,
+  derived from this machine's own timing history (`transcribe`/`diarize` stage
+  durations recorded per completed job, matched by backend/device/model). Shows
+  "no timing history yet" until a matching job has completed once.
 
 ### Changed
 - Glossary matching (`transcript/glossary.py`) now supports a layered
   global-then-per-job lookup via `load_layered_glossary`/`merge_glossaries`.
+- Diarization stage now records its backend/device/model identity in the
+  manifest (`stages.diarize.runtime`), mirroring what transcription already
+  recorded, so both stages can be used for time estimation.
 
 ### Removed
 - `meeting-notes feedback` - replaced by `clarify template`/`clarify apply`. The

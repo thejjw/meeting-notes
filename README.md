@@ -38,6 +38,13 @@ That's it. The pipeline runs: inspect audio → normalize → transcribe → sum
 `configure --accept-defaults` alone only writes configuration. Add `--provision` to
 install assets. Large models require `--yes` in non-interactive use.
 
+Before transcription and diarization start, `process` prints an estimated wall-clock
+time for each, based on this machine's own history of prior runs with the same
+backend/device/model (median real-time factor from completed jobs in `data/meetings/`).
+The first run with a given configuration has no history to draw on, so it prints
+"no timing history yet" instead of a guess; every completed run afterward improves
+the estimate for next time.
+
 ## Output Files
 
 Each successful publication receives a generation directory. Its root stays
