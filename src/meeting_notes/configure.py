@@ -160,7 +160,29 @@ def _prompt_summarization_config(
         if not model:
             console.print("[red]Model ID cannot be blank.[/red]")
             raise typer.Exit(1)
-    return backend, model, None
+    reasoning_effort: str | None = None
+    if backend == "codex":
+        effort_choices = [
+            (None, "Provider default (recommended)"),
+            ("low", "Low (fastest and most economical)"),
+            ("medium", "Medium (balanced)"),
+            ("high", "High (more thorough)"),
+            ("custom", "Custom reasoning effort"),
+        ]
+        console.print("\nCodex reasoning effort")
+        for index, (_, label) in enumerate(effort_choices, 1):
+            console.print(f"  [{index}] {label}")
+        effort_choice = typer.prompt("Select reasoning effort", default="1", type=int)
+        if effort_choice < 1 or effort_choice > len(effort_choices):
+            console.print("[red]Invalid reasoning effort.[/red]")
+            raise typer.Exit(1)
+        reasoning_effort = effort_choices[effort_choice - 1][0]
+        if reasoning_effort == "custom":
+            reasoning_effort = typer.prompt("Reasoning effort").strip()
+            if not reasoning_effort:
+                console.print("[red]Reasoning effort cannot be blank.[/red]")
+                raise typer.Exit(1)
+    return backend, model, reasoning_effort
 
 
 def _run_interactive_wizard(config_path: str | None = None) -> None:

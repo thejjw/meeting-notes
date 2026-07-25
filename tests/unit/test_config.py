@@ -157,7 +157,7 @@ class TestSummarizationWizard:
     def test_recommends_terra_for_codex(self) -> None:
         diagnostics = SystemDiagnostics()
         diagnostics.tools.codex_available = True
-        with patch("typer.prompt", side_effect=[1, 1]):
+        with patch("typer.prompt", side_effect=[1, 1, 1]):
             assert _prompt_summarization_config(diagnostics) == (
                 "codex",
                 "gpt-5.6-terra",
@@ -177,8 +177,28 @@ class TestSummarizationWizard:
     def test_provider_default_is_null(self) -> None:
         diagnostics = SystemDiagnostics()
         diagnostics.tools.codex_available = True
-        with patch("typer.prompt", side_effect=[1, 3]):
+        with patch("typer.prompt", side_effect=[1, 3, 1]):
             assert _prompt_summarization_config(diagnostics) == ("codex", None, None)
+
+    def test_codex_reasoning_effort_can_be_selected(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.codex_available = True
+        with patch("typer.prompt", side_effect=[1, 1, 3]):
+            assert _prompt_summarization_config(diagnostics) == (
+                "codex",
+                "gpt-5.6-terra",
+                "medium",
+            )
+
+    def test_codex_custom_reasoning_effort_is_preserved(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.codex_available = True
+        with patch("typer.prompt", side_effect=[1, 1, 5, "xhigh"]):
+            assert _prompt_summarization_config(diagnostics) == (
+                "codex",
+                "gpt-5.6-terra",
+                "xhigh",
+            )
 
     def test_disabled_remains_default_choice(self) -> None:
         diagnostics = SystemDiagnostics()

@@ -199,6 +199,8 @@ Use `gpt-5.6-sol` or `opus` for quality-first runs. Claude's `sonnet` and
 use documented full IDs such as `gpt-5.6-terra`; bare `terra` is not a
 documented Codex alias. Set Codex `reasoning_effort` explicitly when stable
 behavior matters, or leave it null to inherit the provider default.
+When Codex is selected, the interactive configuration wizard offers provider
+default, low, medium, high, and a custom reasoning-effort value.
 
 ### Custom summarization agents
 
