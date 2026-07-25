@@ -15,9 +15,14 @@ from meeting_notes.config import (
     load_config,
     save_config,
 )
-from meeting_notes.configure import _prompt_summarization_config
+from meeting_notes.configure import (
+    _build_model_options,
+    _create_safe_defaults,
+    _default_model_index,
+    _prompt_summarization_config,
+)
 from meeting_notes.errors import ConfigNotFoundError, ConfigValidationError
-from meeting_notes.resources import SystemDiagnostics
+from meeting_notes.resources import MemoryDetection, SystemDiagnostics
 
 
 class TestConfigModels:
@@ -28,7 +33,7 @@ class TestConfigModels:
         assert config.version == 1
         assert config.setup.completed is False
         assert config.runtime.device == "cpu"
-        assert config.asr.model == "medium"
+        assert config.asr.model == "large-v3-turbo"
         assert config.asr.language == "ko"
 
     def test_config_from_dict(self) -> None:
@@ -143,7 +148,7 @@ class TestProfiles:
         if profile_path.exists():
             data = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
             assert data["runtime"]["device"] == "cpu"
-            assert data["asr"]["model"] == "medium"
+            assert data["asr"]["model"] == "large-v3-turbo"
 
     def test_vulkan_profile(self, tmp_path: Path) -> None:
         profile_path = Path(__file__).parent.parent.parent / "config" / "profiles" / "vulkan.yaml"
@@ -151,6 +156,45 @@ class TestProfiles:
             data = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
             assert data["runtime"]["device"] == "vulkan"
             assert data["asr"]["model"] == "large-v3"
+
+
+class TestTranscriptionWizard:
+    def test_recommends_turbo_when_memory_is_available(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.memory = MemoryDetection(
+            total_ram_gb=16.0,
+            available_ram_gb=8.0,
+        )
+        options = _build_model_options(diagnostics)
+
+        assert options[0]["name"] == "large-v3-turbo"
+        assert _default_model_index(options) == 1
+
+    def test_recommends_small_when_turbo_cannot_fit(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.memory = MemoryDetection(
+            total_ram_gb=2.0,
+            available_ram_gb=1.5,
+        )
+        options = _build_model_options(diagnostics)
+
+        selected = options[_default_model_index(options) - 1]
+        assert selected["name"] == "small"
+
+    def test_safe_defaults_fall_back_to_small_below_turbo_headroom(
+        self, tmp_path: Path
+    ) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.memory = MemoryDetection(
+            total_ram_gb=4.0,
+            available_ram_gb=3.5,
+        )
+        config_path = tmp_path / "config.yaml"
+
+        with patch("meeting_notes.configure.detect_system", return_value=diagnostics):
+            _create_safe_defaults(str(config_path))
+
+        assert load_config(str(config_path)).asr.model == "small"
 
 
 class TestSummarizationWizard:

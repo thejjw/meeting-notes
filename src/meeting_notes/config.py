@@ -176,7 +176,7 @@ class VADConfig(BaseModel):
 class ASRConfig(BaseModel):
     """ASR (speech recognition) settings."""
 
-    model: str = "medium"
+    model: str = "large-v3-turbo"
     model_path: str | None = None
     model_cache_dir: str = "./cache/models"
     language: str = "ko"

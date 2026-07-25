@@ -79,7 +79,7 @@ vad:
   max_speech_seconds: 900
 
 asr:
-  model: medium
+  model: large-v3-turbo
   model_path: null
   model_cache_dir: ./cache/models
   language: ko

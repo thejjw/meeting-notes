@@ -158,6 +158,62 @@ summarization:
     effort: null                 # null inherits the Claude Code default
 ```
 
+### Language configuration
+
+Whisper uses one configured language for each transcription chunk. For the
+Korean/English technical meetings this project primarily targets:
+
+```yaml
+asr:
+  language: ko
+```
+
+Use `ko` when the conversation is Korean-dominant but includes English product
+names, technical terms, or ordinary code-switching. Whisper's multilingual
+tokenizer can still emit English text; `ko` does not mean that every recognized
+token must be Korean. Use `en` for English-dominant dialogue.
+
+Use `auto` when the dominant language is genuinely unknown:
+
+```yaml
+asr:
+  language: auto
+```
+
+`auto` is not sentence- or speaker-level bilingual detection. Whisper detects a
+dominant language before transcription, and meeting-notes repeats that
+detection once per ASR chunk. It may help when long Korean and English sections
+fall into separate chunks, but rapid language switching remains a model
+limitation.
+
+The managed `tiny`, `base`, `small`, `medium`, `large-v3`, and
+`large-v3-turbo` files are multilingual models rather than English-only `.en`
+variants. Other supported examples include `zh` (Chinese), `ja` (Japanese),
+`de` (German), `fr` (French), `es` (Spanish), `pt` (Portuguese), and `vi`
+(Vietnamese). See OpenAI's
+[authoritative language-code list](https://github.com/openai/whisper/blob/main/whisper/tokenizer.py)
+for the complete set. Other languages are available on a best-effort basis;
+project maintenance and fixtures primarily exercise Korean, English, and
+mixed Korean/English technical dialogue, and Whisper quality varies by
+language.
+
+### Whisper model choice
+
+`large-v3-turbo` is the recommended default for transcription. OpenAI describes
+it as substantially faster than the large model with minimal accuracy loss,
+while its whisper.cpp disk and memory footprint is approximately the same as
+`medium`. OpenAI's evaluation also shows that multilingual recognition
+generally improves as model size increases:
+[Whisper README](https://github.com/openai/whisper/blob/main/README.md) and
+[Whisper paper](https://cdn.openai.com/papers/whisper.pdf).
+
+- Use `large-v3-turbo` for the normal Korean/English transcription workflow.
+- Use `small` when download size or available memory is constrained, accepting
+  a larger multilingual accuracy tradeoff.
+- Use `large-v3` when quality matters more than memory and runtime.
+- Use `medium` or `large-v3` for `task: translate`. Turbo is optimized for
+  transcription and does not translate non-English speech into English.
+
 ## ASR Backends
 
 | Backend | Install | Notes |

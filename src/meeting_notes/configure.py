@@ -91,7 +91,7 @@ def _create_safe_defaults(
     )
 
     # Adjust model based on available memory
-    if diag.memory.available_ram_gb < 3.0:
+    if diag.memory.available_ram_gb < 4.1:
         config.asr.model = "small"
 
     if provision:
@@ -222,10 +222,13 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     # Step 2: Model selection
     console.print(f"\n[bold]Models compatible with {selected_backend['name']}[/bold]\n")
     model_options = _build_model_options(diag, selected_backend["runtime_device"])
+    default_model_idx = _default_model_index(model_options)
     for i, opt in enumerate(model_options, 1):
         fit = opt["fit"]
         fit_color = "green" if fit == "available" else ("yellow" if "warning" in fit else "red")
-        console.print(f"  [{i}] {opt['name']} {'(default)' if i == 1 else ''}")
+        console.print(
+            f"  [{i}] {opt['name']} {'(default)' if i == default_model_idx else ''}"
+        )
         console.print(f"      Accuracy: {opt['accuracy']}")
         console.print(f"      Download: {opt['download']}")
         console.print(f"      Runtime memory: {opt['runtime_memory']}")
@@ -233,7 +236,6 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         console.print(f"      Fit: [{fit_color}]{fit}[/{fit_color}]")
         console.print()
 
-    default_model_idx = 1
     choice = typer.prompt("Select a model", default=str(default_model_idx), type=int)
     if choice < 1 or choice > len(model_options):
         console.print("[red]Invalid choice.[/red]")
@@ -242,6 +244,12 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
 
     # Step 3: Language
     console.print("\n[bold]Language settings[/bold]\n")
+    console.print("  ko: Korean-dominant dialogue, including ordinary English terms")
+    console.print("  en: English-dominant dialogue")
+    console.print(
+        "  auto: detect one dominant language per ASR chunk; "
+        "not sentence-level language switching"
+    )
     lang = typer.prompt("Default language", default="ko (Korean)")
     lang_code = lang.split()[0] if lang else "ko"
 
@@ -372,9 +380,9 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
         {
             "name": "Safe CPU (default)",
             "backend": "whisper.cpp CPU",
-            "model": "medium",
+            "model": "large-v3-turbo",
             "memory": "~2.1 GB",
-            "recommended_ram": ">= 4 GB",
+            "recommended_ram": ">= 4.1 GB",
             "compatibility": "available",
             "notes": "slowest but most portable and least driver-dependent",
             "profile": "safe-cpu",
@@ -449,10 +457,28 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
 def _build_model_options(diag: SystemDiagnostics, device: str = "cpu") -> list[dict]:
     """Build model options filtered by compatibility."""
     models = [
-        ("small", "lower, but faster and lighter", "466 MiB", "~852 MB", "~2.9 GB"),
-        ("medium", "better than small; lower than large-v3", "1.5 GiB", "~2.1 GB", "~4.1 GB"),
+        (
+            "large-v3-turbo",
+            "recommended: near large-v3 multilingual accuracy with faster transcription",
+            "~1.5 GiB",
+            "~2.1 GB",
+            "~4.1 GB",
+        ),
+        (
+            "small",
+            "lighter, but less accurate for multilingual transcription",
+            "466 MiB",
+            "~852 MB",
+            "~2.9 GB",
+        ),
+        (
+            "medium",
+            "translation-capable; slower and less accurate than turbo for transcription",
+            "1.5 GiB",
+            "~2.1 GB",
+            "~4.1 GB",
+        ),
         ("large-v3", "highest standard Whisper profile", "2.9 GiB", "~3.9 GB", "~5.9 GB"),
-        ("large-v3-turbo", "fast, near large-v3 accuracy", "~1.5 GiB", "~2.1 GB", "~4.1 GB"),
     ]
 
     options = []
@@ -475,6 +501,31 @@ def _build_model_options(diag: SystemDiagnostics, device: str = "cpu") -> list[d
         )
 
     return options
+
+
+def _default_model_index(model_options: list[dict]) -> int:
+    """Choose turbo unless it cannot meet the detected minimum memory."""
+    turbo = next(
+        (
+            index
+            for index, option in enumerate(model_options, 1)
+            if option["name"] == "large-v3-turbo"
+        ),
+        1,
+    )
+    small = next(
+        (
+            index
+            for index, option in enumerate(model_options, 1)
+            if option["name"] == "small"
+        ),
+        turbo,
+    )
+    return (
+        small
+        if model_options[turbo - 1]["fit"] in {"not_detected", "incompatible"}
+        else turbo
+    )
 
 
 def show_config(resolved: bool = False, config_path: str | None = None) -> None:

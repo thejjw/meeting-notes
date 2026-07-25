@@ -10,7 +10,7 @@ runtime:
   allow_fallback: false
 
 asr:
-  model: medium
+  model: large-v3-turbo
   backend_options:
     whisper_cpp:
       model_variant: fp16
