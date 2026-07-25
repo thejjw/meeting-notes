@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+import tempfile
 from pathlib import Path
-from typing import Any
 
 import structlog
 
 from meeting_notes.asr.base import ASRBackend, ASRResult, ASRSegment
-from meeting_notes.subprocess_utils import run_command
+from meeting_notes.subprocess_utils import run_command, run_command_streaming
 
 log = structlog.get_logger()
 
@@ -68,6 +69,7 @@ class WhisperCppBackend(ASRBackend):
         device: str = "cpu",
         model_variant: str = "fp16",
         flash_attention: bool = True,
+        gpu_device: str | None = None,
     ) -> ASRResult:
         """Run whisper.cpp transcription.
 
@@ -92,6 +94,7 @@ class WhisperCppBackend(ASRBackend):
             device=device,
             model_variant=model_variant,
             flash_attention=flash_attention,
+            gpu_device=gpu_device,
         )
 
         log.info(
@@ -103,26 +106,72 @@ class WhisperCppBackend(ASRBackend):
             args_display=" ".join(args[:10]) + "...",
         )
 
-        # Execute
-        result = run_command(
-            args,
-            timeout=3600.0,  # 1 hour timeout for long recordings
-            label="whisper-cpp-transcribe",
-        )
+        progress_seen = -1
 
-        if not result.success:
-            log.error(
-                "whisper_cpp.failed",
-                returncode=result.returncode,
-                stderr=result.stderr[:1000],
-            )
-            raise RuntimeError(
-                f"whisper.cpp transcription failed (exit {result.returncode}):\n"
-                f"  stderr: {result.stderr[:500]}"
+        def report_progress(stream: str, line: str) -> None:
+            nonlocal progress_seen
+            match = re.search(r"progress\s*=\s*(\d+)%", line, re.IGNORECASE)
+            if match:
+                percent = int(match.group(1))
+                if percent != progress_seen:
+                    progress_seen = percent
+                    log.info("whisper_cpp.progress", percent=percent)
+            elif "error" in line.lower():
+                log.warning("whisper_cpp.output", stream=stream, message=line[:500])
+
+        # -oj writes JSON to a file; it does not emit JSON on stdout. Manage
+        # this directory explicitly so valuable output can be retained when
+        # decoding or parsing fails after a long transcription.
+        temp_dir = Path(tempfile.mkdtemp(prefix="meeting-notes-whisper-"))
+        retain_raw_output = False
+        try:
+            output_prefix = temp_dir / "transcription"
+            args.extend(["-of", str(output_prefix)])
+            if "--print-progress" not in args and "-pp" not in args:
+                args.append("--print-progress")
+
+            result = run_command_streaming(
+                args,
+                on_output=report_progress,
+                timeout=7200.0,
+                label="whisper-cpp-transcribe",
             )
 
-        # Parse output
-        segments = self._parse_output(result.stdout)
+            if not result.success:
+                log.error(
+                    "whisper_cpp.failed",
+                    returncode=result.returncode,
+                    stderr=result.stderr[:1000],
+                )
+                raise RuntimeError(
+                    f"whisper.cpp transcription failed (exit {result.returncode}):\n"
+                    f"  stderr: {result.stderr[:500]}"
+                )
+
+            json_path = output_prefix.with_suffix(".json")
+            if not json_path.exists():
+                raise RuntimeError(
+                    "whisper.cpp completed but did not create its JSON output. "
+                    f"Expected: {json_path}"
+                )
+            json_output, invalid_utf8, first_invalid_offset = self._read_json_output(json_path)
+            if invalid_utf8:
+                retain_raw_output = True
+                log.warning(
+                    "whisper_cpp.invalid_utf8_repaired",
+                    replacement_sequences=invalid_utf8,
+                    first_byte_offset=first_invalid_offset,
+                    raw_json=str(json_path),
+                )
+            segments = self._parse_output(json_output, fallback_to_text=False)
+        except Exception:
+            retain_raw_output = True
+            log.error("whisper_cpp.raw_output_retained", path=str(temp_dir))
+            raise
+        finally:
+            if not retain_raw_output:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
         raw = {"stdout": result.stdout[:5000], "stderr": result.stderr[:2000]}
 
         # Extract language if auto-detected
@@ -174,6 +223,7 @@ class WhisperCppBackend(ASRBackend):
         device: str,
         model_variant: str,
         flash_attention: bool,
+        gpu_device: str | None,
     ) -> list[str]:
         """Build whisper-cli argument list."""
         args = [
@@ -197,23 +247,38 @@ class WhisperCppBackend(ASRBackend):
         if word_timestamps:
             args.append("--word-timestamps")
 
-        if flash_attention and device == "cpu":
+        if flash_attention:
             args.append("--flash-attn")
 
         # Device-specific flags
-        if device == "vulkan":
-            args.extend(["--gpu-device", "0"])
-        elif device == "cuda":
-            args.extend(["--gpu-device", "0"])
-        elif device == "rocm":
-            args.extend(["--gpu-device", "0"])
+        if device == "cpu":
+            args.append("--no-gpu")
+        elif device in {"vulkan", "cuda", "rocm"}:
+            args.extend(["--device", gpu_device or "0"])
+        else:
+            raise ValueError(f"Unsupported whisper.cpp device: {device}")
 
         if extra_args:
             args.extend(extra_args)
 
         return args
 
-    def _parse_output(self, stdout: str) -> list[ASRSegment]:
+    @staticmethod
+    def _read_json_output(path: Path) -> tuple[str, int, int | None]:
+        """Decode whisper.cpp JSON, repairing rare malformed model byte sequences."""
+        raw = path.read_bytes()
+        try:
+            return raw.decode("utf-8"), 0, None
+        except UnicodeDecodeError as error:
+            repaired = raw.decode("utf-8", errors="replace")
+            return repaired, repaired.count("\ufffd"), error.start
+
+    def _parse_output(
+        self,
+        stdout: str,
+        *,
+        fallback_to_text: bool = True,
+    ) -> list[ASRSegment]:
         """Parse whisper.cpp JSON output into segments."""
         segments: list[ASRSegment] = []
 
@@ -223,10 +288,13 @@ class WhisperCppBackend(ASRBackend):
             transcription = data.get("transcription", [])
 
             for i, seg in enumerate(transcription):
+                offsets = seg.get("offsets", {})
+                start_ms = offsets.get("from", seg.get("t0", 0))
+                end_ms = offsets.get("to", seg.get("t1", 0))
                 segment = ASRSegment(
                     id=f"seg-{i:06d}",
-                    start=seg.get("t0", 0) / 1000.0,  # ms to seconds
-                    end=seg.get("t1", 0) / 1000.0,
+                    start=start_ms / 1000.0,
+                    end=end_ms / 1000.0,
                     text=seg.get("text", "").strip(),
                     language=seg.get("language"),
                     confidence=1.0 - seg.get("no_speech_prob", 0)
@@ -245,7 +313,11 @@ class WhisperCppBackend(ASRBackend):
                 if segment.text:
                     segments.append(segment)
 
-        except json.JSONDecodeError:
+        except json.JSONDecodeError as error:
+            if not fallback_to_text:
+                raise RuntimeError(
+                    "whisper.cpp produced invalid JSON; raw output was retained for recovery"
+                ) from error
             # Fall back to line-by-line parsing if JSON fails
             log.warning("whisper_cpp.json_parse_failed", falling_back_to_text=True)
             segments = self._parse_text_output(stdout)

@@ -16,8 +16,8 @@ Takes a recorded meeting audio/video file and produces:
 # Install
 uv sync --group dev
 
-# One-time setup (downloads whisper.cpp binary automatically)
-uv run meeting-notes configure --accept-defaults
+# One-time CPU setup (verified runtime + model)
+uv run meeting-notes configure --accept-defaults --provision --yes
 
 # Process a recording
 uv run meeting-notes process "C:\Recordings\meeting.m4a"
@@ -25,9 +25,8 @@ uv run meeting-notes process "C:\Recordings\meeting.m4a"
 
 That's it. The pipeline runs: inspect audio → normalize → transcribe → summarize → render minutes → finalize filenames.
 
-### First Run
-
-On first run, the setup wizard downloads the whisper.cpp binary for your platform and configures CPU-only transcription. No Docker or compilation needed.
+`configure --accept-defaults` alone only writes configuration. Add `--provision` to
+install assets. Large models require `--yes` in non-interactive use.
 
 ## Output Files
 
@@ -117,8 +116,11 @@ C:\Recordings\
 # First run — interactive wizard
 uv run meeting-notes configure
 
-# Quick setup — safe CPU defaults
+# Config only — safe CPU defaults
 uv run meeting-notes configure --accept-defaults
+
+# Config plus verified runtime and model
+uv run meeting-notes configure --accept-defaults --provision --yes
 
 # Edit config manually
 # Windows: %APPDATA%\meeting-notes\config.yaml
@@ -148,7 +150,7 @@ summarization:
 
 | Backend | Install | Notes |
 |---------|---------|-------|
-| `whisper_cpp` | Pre-built binary (auto-downloaded) | **Default**, works out of the box |
+| `whisper_cpp` | Managed CPU binary or Vulkan source build | **Default** |
 | `openai_whisper` | `uv pip install openai-whisper` | Python/PyTorch, opt-in |
 | `faster_whisper` | `uv pip install faster-whisper` | CPU/NVIDIA CUDA, opt-in |
 
@@ -166,13 +168,60 @@ The default `whisper_cpp` backend uses a pre-built Windows binary from [whisper.
 
 Set `summarization.enabled: false` to skip summarization (transcript-only mode).
 
+## Speaker Diarization
+
+Diarization is optional and uses the local
+[`pyannote/speaker-diarization-community-1`](https://huggingface.co/pyannote/speaker-diarization-community-1)
+pipeline. Install the optional dependencies, then run the guided setup:
+
+```powershell
+uv sync --extra diarization
+uv run meeting-notes diarization setup
+uv run meeting-notes doctor
+```
+
+The setup command uses Hugging Face's browser device-login flow, opens the
+Community-1 conditions page when approval is still needed, downloads the model
+to the managed cache, and writes its local path to configuration. Users must
+personally accept gated-model conditions in the browser; the application cannot
+accept them on their behalf. No manual `HF_TOKEN` environment variable is
+required.
+
+After `doctor` reports diarization as ready, resume an existing transcription
+without rerunning ASR:
+
+```powershell
+uv run meeting-notes process "<audio-file>" --from diarize
+```
+
+An already-downloaded pyannote pipeline can instead be selected with
+`diarization.model_path`; in that mode the application does not require
+`HF_TOKEN`. Obtaining the official Community-1 files initially still requires
+accepting the model's conditions.
+
 ## whisper.cpp Setup
 
-**Default: Pre-built binary** (recommended for most users)
+CPU installs use SHA-256-verified upstream release archives. Vulkan installs are
+native source builds because upstream does not publish Windows/Linux Vulkan binaries.
+Both paths pin whisper.cpp `v1.9.1`.
 
-The first run of `meeting-notes configure --accept-defaults` downloads the appropriate whisper.cpp binary for your platform. No compilation needed.
+```bash
+uv run meeting-notes runtime install --device cpu --config meeting-notes.yaml
+uv run meeting-notes runtime install --device vulkan --config meeting-notes.yaml
+uv run meeting-notes models download large-v3 --yes --config meeting-notes.yaml
+uv run meeting-notes doctor --config meeting-notes.yaml
+uv run meeting-notes doctor --config meeting-notes.yaml --smoke-test
+```
 
-**Alternative: Build from source**
+Windows Vulkan requires Git, CMake, Visual Studio C++ Build Tools, and Vulkan SDK
+tooling. Linux requires Git, CMake, a C++ toolchain, and Vulkan development packages.
+The app diagnoses these prerequisites but does not install system-wide developer tools.
+
+Managed assets live under `%LOCALAPPDATA%\meeting-notes\cache` on Windows and
+`${XDG_CACHE_HOME:-~/.cache}/meeting-notes` on Linux. Failed downloads do not replace
+verified assets; Vulkan build logs are retained beside the runtime directory.
+
+**Build scripts and Docker**
 
 If you need a custom build (e.g., for specific GPU support):
 

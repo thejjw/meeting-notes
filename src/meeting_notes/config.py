@@ -252,7 +252,7 @@ class SummarizationConfig(BaseModel):
     """Summarization settings."""
 
     enabled: bool = True
-    backend: str = "codex_cli"
+    backend: str = "codex"
     source_transcript: str = "merged"
     prompt_path: str = "./prompts/meeting-summary.md"
     chunk_prompt_path: str = "./prompts/meeting-chunk-summary.md"
@@ -286,6 +286,10 @@ class NamingConfig(BaseModel):
     recording_template: str = "{date}_{short_title}{extension}"
     minutes_template: str = "{date}_{short_title}_meeting-notes.md"
     json_export_template: str = "{date}_{short_title}_meeting-notes.json"
+    transcript_json_template: str = "{date}_{short_title}_transcript.json"
+    transcript_markdown_template: str = "{date}_{short_title}_transcript.md"
+    transcript_srt_template: str = "{date}_{short_title}_transcript.srt"
+    transcript_vtt_template: str = "{date}_{short_title}_transcript.vtt"
     preserve_unicode: bool = True
     whitespace_replacement: str = "-"
     max_short_title_characters: int = 48
@@ -417,10 +421,9 @@ def save_config(config: MeetingNotesConfig, path: Path) -> None:
     try:
         os.write(fd, content.encode("utf-8"))
         os.close(fd)
-        # On Windows, rename fails if target exists; remove first
-        if path.exists():
-            path.unlink()
-        os.rename(tmp_path, str(path))
+        # os.replace is atomic on the same filesystem and replaces an existing
+        # destination on both Windows and POSIX.
+        os.replace(tmp_path, path)
     except Exception:
         os.close(fd) if not os.get_inheritable(fd) else None  # type: ignore[arg-type]
         try:

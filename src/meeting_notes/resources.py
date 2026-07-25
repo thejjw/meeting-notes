@@ -177,9 +177,9 @@ def _detect_vulkan() -> list[dict[str, Any]]:
             if current:
                 devices.append(current)
             current = {"name": "", "type": ""}
-        elif "deviceName" in line.lower():
+        elif "devicename" in line.lower():
             current["name"] = line.split("=", 1)[-1].strip() if "=" in line else line
-        elif "deviceType" in line.lower():
+        elif "devicetype" in line.lower():
             current["type"] = line.split("=", 1)[-1].strip() if "=" in line else line
     if current:
         devices.append(current)
@@ -499,7 +499,7 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
     lines.append("External tools")
     lines.append(f"  FFmpeg: {'available' if diag.tools.ffmpeg_available else 'not found'} {diag.tools.ffmpeg_version}")
     lines.append(f"  FFprobe: {'available' if diag.tools.ffprobe_available else 'not found'} {diag.tools.ffprobe_version}")
-    lines.append(f"  whisper.cpp: {'available' if diag.tools.whisper_cpp_available else 'not found'} {diag.tools.whisper_cpp_version}")
+    lines.append(f"  whisper.cpp on PATH: {'available' if diag.tools.whisper_cpp_available else 'not found'} {diag.tools.whisper_cpp_version}")
     lines.append(f"  Codex CLI: {'available' if diag.tools.codex_available else 'not found'} {diag.tools.codex_version}")
 
     return "\n".join(lines)

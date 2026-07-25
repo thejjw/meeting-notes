@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -18,6 +19,7 @@ from meeting_notes.config import MeetingNotesConfig, load_config
 from meeting_notes.errors import (
     ConfigurationError,
     DependencyMissingError,
+    DiarizationUnavailableError,
     StageCancelledError,
 )
 from meeting_notes.jobs import (
@@ -62,6 +64,141 @@ def _check_tools(config: MeetingNotesConfig) -> None:
             raise typer.Exit(1)
 
 
+def _active_config_path(config_path: str | None) -> Path:
+    """Return the active config path for copy/paste remediation commands."""
+    from meeting_notes.config import _resolve_config_path
+
+    resolved = _resolve_config_path(config_path)
+    return (resolved or Path(config_path or "meeting-notes.yaml")).resolve()
+
+
+def _asr_remediation(
+    config: MeetingNotesConfig,
+    config_path: str | None,
+    *,
+    runtime_ready: bool = False,
+) -> str:
+    """Build exact commands that make the configured whisper.cpp backend runnable."""
+    from meeting_notes.models import verify_model
+    from meeting_notes.runtime import installed_runtimes, vulkan_prerequisites
+
+    active_config = _active_config_path(config_path)
+    quoted_config = f'"{active_config}"'
+    lines = [
+        "",
+        "[bold]How to finish setup[/bold]",
+        f"Active config: {active_config}",
+    ]
+
+    runtimes = installed_runtimes()
+    if not runtime_ready:
+        matching = [
+            item
+            for item in runtimes
+            if item.get("backend") == config.runtime.device and item.get("healthy")
+        ]
+        if matching:
+            lines.extend(
+                [
+                    f"A managed {config.runtime.device} runtime is already installed but is not "
+                    "selected by this config.",
+                    "Run:",
+                ]
+            )
+        elif config.runtime.device == "vulkan":
+            missing = vulkan_prerequisites()
+            if missing:
+                lines.append("The selected Vulkan backend is missing build prerequisites:")
+                lines.extend(f"  - {item}" for item in missing)
+                lines.append(
+                    "Install CMake and Visual Studio C++ Build Tools, then open a Developer "
+                    "PowerShell and run:"
+                )
+            else:
+                lines.append("Build and select the configured Vulkan runtime:")
+        else:
+            lines.append("Install and select the configured CPU runtime:")
+        lines.append(
+            "  uv run meeting-notes runtime install "
+            f"--device {config.runtime.device} --config {quoted_config} --yes"
+        )
+
+    cpu_ready = any(
+        item.get("backend") == "cpu" and item.get("healthy")
+        for item in runtimes
+    )
+    if not runtime_ready and config.runtime.device == "vulkan" and cpu_ready:
+        lines.extend(
+            [
+                "",
+                "Or use the already-installed CPU runtime (this explicitly changes the config; "
+                "there is no silent fallback):",
+                "  uv run meeting-notes runtime install "
+                f"--device cpu --config {quoted_config} --yes",
+            ]
+        )
+
+    model_path = Path(config.asr.model_path) if config.asr.model_path else None
+    model_ready = False
+    if model_path:
+        try:
+            model_ready, _ = verify_model(config.asr.model, model_path)
+        except RuntimeError:
+            model_ready = model_path.is_file()
+    if not model_ready:
+        lines.extend(
+            [
+                "",
+                f"The configured model '{config.asr.model}' is also not ready. Run:",
+                "  uv run meeting-notes models download "
+                f"{config.asr.model} --config {quoted_config} --yes",
+            ]
+        )
+
+    lines.extend(
+        [
+            "",
+            "Then verify everything before retrying the recording:",
+            f"  uv run meeting-notes doctor --config {quoted_config}",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _check_asr_readiness(config: MeetingNotesConfig, config_path: str | None) -> None:
+    """Fail before audio preparation with complete whisper.cpp remediation."""
+    if config.runtime.asr_backend != "whisper_cpp":
+        return
+    backend = get_backend("whisper_cpp", executable=config.runtime.whisper_cpp_path)
+    runtime_ready = backend.is_available()
+    model_ready = False
+    model_detail = "model_path is not configured"
+    if config.asr.model_path:
+        from meeting_notes.models import verify_model
+
+        try:
+            model_ready, model_detail = verify_model(
+                config.asr.model, Path(config.asr.model_path)
+            )
+        except RuntimeError:
+            model_ready = Path(config.asr.model_path).is_file()
+            model_detail = "present" if model_ready else "missing"
+    if runtime_ready and model_ready:
+        return
+    if not runtime_ready:
+        console.print(
+            f"[red]Configured whisper.cpp executable is unavailable:[/red] "
+            f"{config.runtime.whisper_cpp_path}"
+        )
+    if not model_ready:
+        console.print(
+            f"[red]Configured Whisper model is unavailable:[/red] "
+            f"{config.asr.model} ({model_detail})"
+        )
+    console.print(_asr_remediation(config, config_path, runtime_ready=runtime_ready))
+    raise typer.Exit(1)
+
+
 def run_pipeline(
     input_file: str,
     config_path: str | None = None,
@@ -82,6 +219,8 @@ def run_pipeline(
     if not source.exists():
         console.print(f"[red]File not found:[/red] {input_file}")
         raise typer.Exit(1)
+    if not dry_run:
+        _check_asr_readiness(config, config_path)
 
     # Create job directory
     slug = make_job_slug(source)
@@ -169,6 +308,10 @@ def run_pipeline(
 
     save_manifest(job_dir, manifest)
     console.print(f"\n[green]Pipeline complete.[/green] Job: {job_dir}")
+    template = job_dir.resolve() / "speakers.yaml"
+    if template.exists():
+        console.print(f"Speaker template: {template}")
+        console.print(f"Next: uv run meeting-notes speakers apply \"{job_dir.resolve()}\"")
 
 
 def _print_dry_run(
@@ -244,6 +387,29 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
         backend_kwargs = {}
         if config.runtime.asr_backend == "whisper_cpp":
             backend_kwargs["executable"] = config.runtime.whisper_cpp_path
+            from meeting_notes.runtime import find_manifest_for_executable
+
+            executable = Path(config.runtime.whisper_cpp_path).resolve()
+            runtime_manifest = find_manifest_for_executable(executable)
+            runtime_identity = {
+                "backend": "whisper_cpp",
+                "device": config.runtime.device,
+                "executable": str(executable),
+                "managed": runtime_manifest is not None,
+                "runtime_version": (
+                    runtime_manifest.get("version") if runtime_manifest else None
+                ),
+                "runtime_backend": (
+                    runtime_manifest.get("backend") if runtime_manifest else None
+                ),
+                "source_revision": (
+                    runtime_manifest.get("source_revision") if runtime_manifest else None
+                ),
+                "model": config.asr.model,
+                "model_path": config.asr.model_path,
+            }
+            manifest["stages"]["transcribe"]["runtime"] = runtime_identity
+            log.info("asr.runtime_selected", **runtime_identity)
 
         backend = get_backend(config.runtime.asr_backend, **backend_kwargs)
 
@@ -252,16 +418,42 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
                 f"ASR backend '{config.runtime.asr_backend}' is not available."
             )
 
+        # Resolve the configured automatic CPU thread policy. whisper-cli's
+        # own default is only four threads, which underuses modern CPUs.
+        threads = config.runtime.threads
+        if config.runtime.asr_backend == "whisper_cpp":
+            threads = _resolve_whisper_threads(config)
+        if config.runtime.asr_backend == "whisper_cpp" and config.runtime.threads <= 0:
+            log.info(
+                "whisper_cpp.threads_auto_selected",
+                threads=threads,
+                logical_cores=os.cpu_count() or 1,
+            )
+
         # Run transcription
+        transcribe_kwargs = {
+            "model": config.asr.model,
+            "model_path": Path(config.asr.model_path) if config.asr.model_path else None,
+            "language": config.asr.language,
+            "task": config.asr.task,
+            "initial_prompt": config.asr.initial_prompt,
+            "word_timestamps": config.asr.word_timestamps,
+            "threads": threads,
+        }
+        if config.runtime.asr_backend == "whisper_cpp":
+            whisper_options = config.asr.backend_options.whisper_cpp
+            transcribe_kwargs.update(
+                {
+                    "device": config.runtime.device,
+                    "model_variant": whisper_options.model_variant,
+                    "flash_attention": whisper_options.flash_attention,
+                    "extra_args": whisper_options.extra_args,
+                    "gpu_device": whisper_options.gpu_device,
+                }
+            )
         result = backend.transcribe(
             normalized,
-            model=config.asr.model,
-            model_path=Path(config.asr.model_path) if config.asr.model_path else None,
-            language=config.asr.language,
-            task=config.asr.task,
-            initial_prompt=config.asr.initial_prompt,
-            word_timestamps=config.asr.word_timestamps,
-            threads=config.runtime.threads,
+            **transcribe_kwargs,
         )
 
         # Use duration from manifest if available, else estimate
@@ -286,6 +478,48 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
         raise
 
 
+def _resolve_whisper_threads(config: MeetingNotesConfig) -> int:
+    """Resolve zero/automatic thread configuration for whisper.cpp."""
+    if config.runtime.threads > 0:
+        return config.runtime.threads
+
+    logical_cores = os.cpu_count() or 1
+    threads = max(1, logical_cores - config.runtime.reserve_logical_cores)
+    if config.runtime.max_auto_threads > 0:
+        threads = min(threads, config.runtime.max_auto_threads)
+    return threads
+
+
+def _module_available(module_name: str) -> bool:
+    """Check an optional module without importing its heavy dependencies."""
+    import importlib.util
+
+    return importlib.util.find_spec(module_name) is not None
+
+
+def _print_diarization_remediation(
+    config: MeetingNotesConfig,
+    *,
+    pyannote_installed: bool,
+) -> None:
+    """Print exact setup steps when optional diarization is unavailable."""
+    from meeting_notes.configure import _diarization_recommendations
+    from meeting_notes.diarization.setup import resolve_hf_token
+
+    token, _ = resolve_hf_token(config.diarization.token_env)
+    checks = {
+        "pyannote_installed": pyannote_installed,
+        "hf_token_ready": bool(token),
+        "local_diarization_model_ready": bool(
+            config.diarization.model_path
+            and Path(config.diarization.model_path).exists()
+        ),
+    }
+    console.print("[yellow]  Diarization unavailable.[/yellow]")
+    for line in _diarization_recommendations(config, checks):
+        console.print(line)
+
+
 def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dict:
     """Stage: Run speaker diarization."""
     update_stage_status(manifest, "diarize", "running")
@@ -306,15 +540,26 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
 
             backend = PyannoteDiarizationBackend(
                 model_name=config.diarization.model,
+                model_path=(
+                    Path(config.diarization.model_path)
+                    if config.diarization.model_path
+                    else None
+                ),
                 token_env=config.diarization.token_env,
                 device=config.diarization.device,
                 use_exclusive=config.diarization.use_exclusive_diarization,
             )
 
             if not backend.is_available():
-                console.print("[yellow]  Diarization unavailable (missing token or dependency)[/yellow]")
-                update_stage_status(manifest, "diarize", "skipped")
-                return manifest
+                _print_diarization_remediation(
+                    config,
+                    pyannote_installed=_module_available("pyannote.audio"),
+                )
+                raise DiarizationUnavailableError(
+                    "Diarization is enabled but pyannote.audio and/or "
+                    f"{config.diarization.token_env} is unavailable. "
+                    "Disable diarization explicitly to continue without speaker labels."
+                )
 
             result = backend.diarize(
                 normalized,
@@ -342,9 +587,11 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
             diar_path.write_text(json.dumps(diar_data, indent=2), encoding="utf-8")
 
         except ImportError:
-            console.print("[yellow]  Diarization unavailable (pyannote not installed)[/yellow]")
-            update_stage_status(manifest, "diarize", "skipped")
-            return manifest
+            _print_diarization_remediation(config, pyannote_installed=False)
+            raise DiarizationUnavailableError(
+                "Diarization is enabled but pyannote.audio is not installed. "
+                "Disable diarization explicitly to continue without speaker labels."
+            ) from None
 
         update_stage_status(manifest, "diarize", "completed")
         return manifest
@@ -370,6 +617,8 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
         # Load diarization if available
         diar_path = job_dir / "diarization" / "diarization.json"
         if diar_path.exists():
+            from meeting_notes.diarization.base import DiarizationTurn
+
             diar_data = json.loads(diar_path.read_text(encoding="utf-8"))
             turns = [
                 DiarizationTurn(
@@ -445,6 +694,19 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
         merged_path.parent.mkdir(parents=True, exist_ok=True)
         merged_path.write_text(json.dumps(merged_data, indent=2, ensure_ascii=False), encoding="utf-8")
 
+        # Speaker identification is a downstream-only workflow. Never overwrite
+        # a map the user may already have edited.
+        from meeting_notes.speakers import write_template
+        template_path, template_warning = write_template(job_dir, automatic=True)
+        if template_warning:
+            console.print(f"[yellow]  Speaker map: {template_warning}; candidate: {template_path}[/yellow]")
+        elif template_path:
+            manifest["speaker_template"] = {
+                "version": 1,
+                "path": str(template_path),
+                "transcript_sha256": __import__("hashlib").sha256(merged_path.read_bytes()).hexdigest(),
+            }
+
         update_stage_status(manifest, "merge", "completed")
         return manifest
     except Exception:
@@ -474,16 +736,7 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
         raw_data = json.loads(merged_path.read_text(encoding="utf-8"))
         segments = raw_data.get("segments", [])
 
-        # Format transcript as text
-        transcript_lines = []
-        for seg in segments:
-            h = int(seg["start"] // 3600)
-            m = int((seg["start"] % 3600) // 60)
-            s = int(seg["start"] % 60)
-            ts = f"{h:02d}:{m:02d}:{s:02d}"
-            speaker = f" [{seg.get('speaker', '')}]" if seg.get("speaker") else ""
-            transcript_lines.append(f"[{ts}]{speaker} {seg['text']}")
-        transcript_text = "\n".join(transcript_lines)
+        transcript_text = _format_summary_transcript(segments)
 
         # Load prompt
         prompt_path = Path(config.summarization.prompt_path)
@@ -499,12 +752,32 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
         adapter_name = config.summarization.backend
 
         # Check local-only mode
-        if local_only and adapter_name in ("codex", "opencode", "mimo", "claude"):
+        if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
             console.print(f"[yellow]  Summarization adapter '{adapter_name}' rejected: --local-only mode[/yellow]")
             update_stage_status(manifest, "summarize", "skipped")
             return manifest
 
-        adapter = get_adapter(adapter_name)
+        adapter_kwargs = {}
+        if adapter_name in ("codex", "codex_cli"):
+            codex_options = config.summarization.codex
+            adapter_kwargs = {
+                "executable": codex_options.executable,
+                "model": codex_options.model,
+                "reasoning_effort": codex_options.reasoning_effort,
+                "ephemeral": codex_options.ephemeral,
+                "skip_git_repo_check": codex_options.skip_git_repo_check,
+                "ignore_user_config": codex_options.ignore_user_config,
+                "ignore_rules": codex_options.ignore_rules,
+                "extra_args": codex_options.extra_args,
+            }
+        elif adapter_name == "local_command":
+            local_options = config.summarization.local_command
+            adapter_kwargs = {
+                "command": local_options.command,
+                "environment": local_options.environment,
+            }
+
+        adapter = get_adapter(adapter_name, **adapter_kwargs)
         if not adapter.is_available():
             console.print(f"[yellow]  Summarization adapter '{adapter_name}' not available[/yellow]")
             update_stage_status(manifest, "summarize", "skipped")
@@ -530,6 +803,23 @@ def _run_summarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig, lo
     except Exception:
         update_stage_status(manifest, "summarize", "failed")
         raise
+
+
+def _format_summary_transcript(segments: list[dict]) -> str:
+    """Format segments with stable IDs so summaries can cite evidence."""
+    transcript_lines = []
+    for index, segment in enumerate(segments):
+        start = segment["start"]
+        hours = int(start // 3600)
+        minutes = int((start % 3600) // 60)
+        seconds = int(start % 60)
+        timestamp = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        segment_id = segment.get("id") or f"seg-{index:06d}"
+        speaker = f" [{segment['speaker']}]" if segment.get("speaker") else ""
+        transcript_lines.append(
+            f"[{segment_id}] [{timestamp}]{speaker} {segment['text']}"
+        )
+    return "\n".join(transcript_lines)
 
 
 def _run_render(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dict:
@@ -713,6 +1003,7 @@ def run_prepare(input_file: str, config_path: str | None = None) -> None:
 def run_transcribe(job_dir: str, config_path: str | None = None) -> None:
     """Run ASR transcription."""
     config = _load_or_fail(config_path)
+    _check_asr_readiness(config, config_path)
     manifest = load_manifest(Path(job_dir))
     manifest = _run_transcribe(Path(job_dir), manifest, config)
     save_manifest(Path(job_dir), manifest)
@@ -735,6 +1026,10 @@ def run_merge(job_dir: str, config_path: str | None = None) -> None:
     manifest = _run_merge(Path(job_dir), manifest, config)
     save_manifest(Path(job_dir), manifest)
     console.print("[green]Merge complete.[/green]")
+    template = Path(job_dir).resolve() / "speakers.yaml"
+    if template.exists():
+        console.print(f"Speaker template: {template}")
+        console.print(f"Next: uv run meeting-notes speakers apply \"{Path(job_dir).resolve()}\"")
 
 
 def run_summarize(job_dir: str, config_path: str | None = None) -> None:

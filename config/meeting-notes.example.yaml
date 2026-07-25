@@ -146,7 +146,7 @@ glossary:
 
 summarization:
   enabled: true
-  backend: codex_cli
+  backend: codex
   source_transcript: merged
   prompt_path: ./prompts/meeting-summary.md
   chunk_prompt_path: ./prompts/meeting-chunk-summary.md
@@ -184,6 +184,10 @@ naming:
   recording_template: "{date}_{short_title}{extension}"
   minutes_template: "{date}_{short_title}_meeting-notes.md"
   json_export_template: "{date}_{short_title}_meeting-notes.json"
+  transcript_json_template: "{date}_{short_title}_transcript.json"
+  transcript_markdown_template: "{date}_{short_title}_transcript.md"
+  transcript_srt_template: "{date}_{short_title}_transcript.srt"
+  transcript_vtt_template: "{date}_{short_title}_transcript.vtt"
   preserve_unicode: true
   whitespace_replacement: "-"
   max_short_title_characters: 48

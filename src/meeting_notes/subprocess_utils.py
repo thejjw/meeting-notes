@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import subprocess
-import sys
+import threading
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -50,6 +51,7 @@ def run_command(
     label: str = "command",
     input_text: str | None = None,
     capture_stderr: bool = True,
+    redact_args: set[int] | None = None,
 ) -> SubprocessResult:
     """Run a subprocess with argument array (never shell=True).
 
@@ -61,6 +63,7 @@ def run_command(
         label: Human-readable label for error messages.
         input_text: Text to pipe to stdin.
         capture_stderr: Whether to capture stderr.
+        redact_args: Argument indexes replaced in diagnostic logs.
 
     Returns:
         SubprocessResult with returncode, stdout, stderr.
@@ -71,7 +74,15 @@ def run_command(
     if merged_env and env:
         merged_env.update(env)
 
-    display_args = " ".join(a if " " not in a else f'"{a}"' for a in args)
+    redacted = redact_args or set()
+    display_args = " ".join(
+        (
+            "<redacted>"
+            if index in redacted
+            else argument if " " not in argument else f'"{argument}"'
+        )
+        for index, argument in enumerate(args)
+    )
     log.debug("subprocess.run", args=display_args, label=label)
 
     try:
@@ -102,6 +113,84 @@ def run_command(
     except OSError as e:
         log.error("subprocess.os_error", args=display_args, error=str(e), label=label)
         raise RuntimeError(f"{label}: {e}") from e
+
+
+def run_command_streaming(
+    args: list[str],
+    *,
+    on_output: Callable[[str, str], None],
+    timeout: float | None = 120.0,
+    cwd: str | Path | None = None,
+    env: dict[str, str] | None = None,
+    label: str = "command",
+) -> SubprocessResult:
+    """Run a command while reporting and retaining stdout/stderr lines."""
+    import os
+
+    merged_env = dict(os.environ) if env else None
+    if merged_env and env:
+        merged_env.update(env)
+
+    display_args = " ".join(a if " " not in a else f'"{a}"' for a in args)
+    log.debug("subprocess.Popen", args=display_args, label=label)
+
+    try:
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            env=merged_env,
+            shell=False,
+        )
+    except FileNotFoundError:
+        log.error("subprocess.not_found", args=display_args, label=label)
+        raise RuntimeError(f"{label}: executable not found: {args[0]}") from None
+    except OSError as e:
+        log.error("subprocess.os_error", args=display_args, error=str(e), label=label)
+        raise RuntimeError(f"{label}: {e}") from e
+
+    captured: dict[str, list[str]] = {"stdout": [], "stderr": []}
+
+    def _read_stream(name: str, stream: Any) -> None:
+        try:
+            for line in stream:
+                captured[name].append(line)
+                on_output(name, line.rstrip("\r\n"))
+        finally:
+            stream.close()
+
+    readers = [
+        threading.Thread(target=_read_stream, args=("stdout", proc.stdout), daemon=True),
+        threading.Thread(target=_read_stream, args=("stderr", proc.stderr), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
+
+    try:
+        returncode = proc.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        log.error("subprocess.timeout", args=display_args, timeout=timeout, label=label)
+        raise RuntimeError(f"{label} timed out after {timeout}s") from None
+    except BaseException:
+        proc.kill()
+        proc.wait()
+        raise
+    finally:
+        for reader in readers:
+            reader.join(timeout=5.0)
+
+    return SubprocessResult(
+        returncode=returncode,
+        stdout="".join(captured["stdout"]),
+        stderr="".join(captured["stderr"]),
+        args=args,
+    )
 
 
 def run_command_background(

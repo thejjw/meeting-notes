@@ -14,9 +14,28 @@ log = structlog.get_logger()
 
 # Windows reserved device names
 _WIN_RESERVED = {
-    "CON", "PRN", "AUX", "NUL",
-    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
 }
 
 
@@ -41,23 +60,25 @@ def sanitize_short_title(
         return "meeting"
 
     # Remove path separators and control characters
-    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', '', title)
+    sanitized = re.sub(r'[/\\:*?"<>|\x00-\x1f]', "", title)
 
     # Replace whitespace
-    sanitized = re.sub(r'\s+', whitespace_replacement, sanitized.strip())
+    sanitized = re.sub(r"\s+", whitespace_replacement, sanitized.strip())
 
     # Collapse repeated separators
-    sanitized = re.sub(r'[' + re.escape(whitespace_replacement) + r']{2,}', whitespace_replacement, sanitized)
+    sanitized = re.sub(
+        r"[" + re.escape(whitespace_replacement) + r"]{2,}", whitespace_replacement, sanitized
+    )
 
     # Trim trailing spaces and dots (Windows issue)
-    sanitized = sanitized.rstrip('. ')
+    sanitized = sanitized.rstrip(". ")
 
     # Truncate
     if len(sanitized) > max_length:
-        sanitized = sanitized[:max_length].rstrip('. ')
+        sanitized = sanitized[:max_length].rstrip(". ")
 
     # Check Windows reserved names
-    stem = sanitized.split('.')[0].upper()
+    stem = sanitized.split(".")[0].upper()
     if stem in _WIN_RESERVED:
         sanitized = f"file-{sanitized}"
 
@@ -117,23 +138,27 @@ def generate_filenames(
     recording_template: str = "{date}_{short_title}{extension}",
     minutes_template: str = "{date}_{short_title}_meeting-notes.md",
     json_template: str = "{date}_{short_title}_meeting-notes.json",
+    transcript_json_template: str = "{date}_{short_title}_transcript.json",
+    transcript_markdown_template: str = "{date}_{short_title}_transcript.md",
+    transcript_srt_template: str = "{date}_{short_title}_transcript.srt",
+    transcript_vtt_template: str = "{date}_{short_title}_transcript.vtt",
 ) -> dict[str, str]:
     """Generate finalized filenames from date and title.
 
     Returns dict with keys: 'recording', 'minutes', 'json_export'.
     """
-    ext = original_extension if original_extension.startswith('.') else f'.{original_extension}'
+    ext = original_extension if original_extension.startswith(".") else f".{original_extension}"
 
     return {
-        "recording": recording_template.format(
-            date=date, short_title=short_title, extension=ext
-        ),
-        "minutes": minutes_template.format(
+        "recording": recording_template.format(date=date, short_title=short_title, extension=ext),
+        "minutes": minutes_template.format(date=date, short_title=short_title),
+        "json_export": json_template.format(date=date, short_title=short_title),
+        "transcript_json": transcript_json_template.format(date=date, short_title=short_title),
+        "transcript_markdown": transcript_markdown_template.format(
             date=date, short_title=short_title
         ),
-        "json_export": json_template.format(
-            date=date, short_title=short_title
-        ),
+        "transcript_srt": transcript_srt_template.format(date=date, short_title=short_title),
+        "transcript_vtt": transcript_vtt_template.format(date=date, short_title=short_title),
     }
 
 
@@ -169,6 +194,7 @@ def resolve_collision(
 
     elif policy == "short_hash":
         import hashlib
+
         hash_val = hashlib.md5(str(target_path).encode()).hexdigest()[:8]
         return parent / f"{stem}_{hash_val}{suffix}"
 
@@ -205,7 +231,9 @@ def finalize_recording(
     # managed_copy: copy or hardlink to target dir
     target_dir.mkdir(parents=True, exist_ok=True)
 
-    if copy_method == "hardlink" or (copy_method == "auto" and _same_filesystem(source_path, target)):
+    if copy_method == "hardlink" or (
+        copy_method == "auto" and _same_filesystem(source_path, target)
+    ):
         try:
             os.link(str(source_path), str(target))
             log.info("naming.hardlink", source=str(source_path), target=str(target))

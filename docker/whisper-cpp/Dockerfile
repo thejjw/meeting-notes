@@ -1,49 +1,25 @@
-# Multi-stage build: compile whisper.cpp, then copy binary out
-#
-# Usage:
-#   docker build -t whisper-builder -f Dockerfile .
-#   docker run --rm -v $(pwd)/../../bin:/out whisper-builder
-#
-# This copies whisper-cli and libraries to ./bin/ on the host.
-# After that, use the native binary directly — no Docker needed.
-
-FROM ubuntu:22.04 AS builder
-
+FROM ubuntu:24.04 AS builder
 ARG DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y \
-    build-essential \
-    cmake \
-    git \
-    curl \
+ARG WHISPER_CPP_VERSION=v1.9.1
+ARG WHISPER_BACKEND=cpu
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates cmake git libvulkan-dev glslc spirv-headers \
     && rm -rf /var/lib/apt/lists/*
-
 WORKDIR /build
+RUN git clone --branch "${WHISPER_CPP_VERSION}" --depth 1 https://github.com/ggml-org/whisper.cpp.git source
+RUN test "$WHISPER_BACKEND" = cpu || test "$WHISPER_BACKEND" = vulkan
+RUN if [ "$WHISPER_BACKEND" = vulkan ]; then flag=-DGGML_VULKAN=1; else flag=-DGGML_VULKAN=0; fi; \
+    cmake -S source -B output -DCMAKE_BUILD_TYPE=Release "$flag" -DCMAKE_INSTALL_PREFIX=/opt/whisper \
+    && cmake --build output --config Release --parallel \
+    && cmake --install output --config Release
 
-# Clone whisper.cpp
-RUN git clone --depth 1 https://github.com/ggerganov/whisper.cpp.git
-
-WORKDIR /build/whisper.cpp
-
-# Build with CPU support
-RUN cmake -B build \
-    -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_INSTALL_PREFIX=/usr/local \
-    && cmake --build build --config Release -j$(nproc)
-
-# Output stage — just the binaries
-FROM ubuntu:22.04 AS output
-
-RUN apt-get update && apt-get install -y \
-    libgomp1 \
+FROM ubuntu:24.04
+ARG DEBIAN_FRONTEND=noninteractive
+ARG WHISPER_BACKEND=cpu
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 libvulkan1 \
     && rm -rf /var/lib/apt/lists/*
-
-COPY --from=builder /build/whisper.cpp/build/bin/whisper-cli /usr/local/bin/whisper-cli
-COPY --from=builder /build/whisper.cpp/build/bin/lib*.so* /usr/local/lib/
-RUN ldconfig
-
-# Default: copy binaries to /out volume mount
-RUN mkdir -p /out
-VOLUME ["/out"]
-
-CMD ["sh", "-c", "cp /usr/local/bin/whisper-cli /out/ && cp /usr/local/lib/lib*.so* /out/ && echo 'Binaries copied to /out/'"]
+COPY --from=builder /opt/whisper /opt/whisper
+ENV LD_LIBRARY_PATH="/opt/whisper/lib"
+RUN /opt/whisper/bin/whisper-cli --help >/dev/null
+ENV PATH="/opt/whisper/bin:${PATH}"
+ENTRYPOINT ["whisper-cli"]

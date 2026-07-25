@@ -8,6 +8,7 @@ from meeting_notes.subprocess_utils import (
     SubprocessResult,
     format_command_display,
     run_command,
+    run_command_streaming,
 )
 
 
@@ -70,3 +71,25 @@ class TestRunCommand:
         else:
             with pytest.raises(RuntimeError, match="timed out"):
                 run_command(["sleep", "10"], timeout=0.5, label="test")
+
+
+def test_run_command_streaming_reports_and_captures_output() -> None:
+    import sys
+
+    received: list[tuple[str, str]] = []
+    result = run_command_streaming(
+        [
+            sys.executable,
+            "-c",
+            "import sys; print('out'); print('err', file=sys.stderr)",
+        ],
+        on_output=lambda stream, line: received.append((stream, line)),
+        timeout=5.0,
+        label="stream-test",
+    )
+
+    assert result.success
+    assert "out" in result.stdout
+    assert "err" in result.stderr
+    assert ("stdout", "out") in received
+    assert ("stderr", "err") in received

@@ -93,12 +93,18 @@ class CodexAdapter(SummarizerAdapter):
         reasoning_effort: str | None = None,
         ephemeral: bool = True,
         skip_git_repo_check: bool = True,
+        ignore_user_config: bool = False,
+        ignore_rules: bool = False,
+        extra_args: list[str] | None = None,
     ) -> None:
         self._executable = executable
         self._model = model
         self._reasoning_effort = reasoning_effort
         self._ephemeral = ephemeral
         self._skip_git_repo_check = skip_git_repo_check
+        self._ignore_user_config = ignore_user_config
+        self._ignore_rules = ignore_rules
+        self._extra_args = extra_args or []
 
     @property
     def name(self) -> str:
@@ -125,16 +131,7 @@ class CodexAdapter(SummarizerAdapter):
     ) -> SummaryResult:
         with tempfile.TemporaryDirectory(prefix="meeting-notes-codex-") as tmp_dir:
             tmp = Path(tmp_dir)
-
-            # Write prompt and transcript to files
-            prompt_file = tmp / "prompt.txt"
-            prompt_file.write_text(prompt, encoding="utf-8")
-
-            transcript_file = tmp / "transcript.txt"
-            transcript_file.write_text(transcript_text, encoding="utf-8")
-
-            # Build the full prompt with transcript
-            full_prompt = f"{prompt}\n\n<transcript>\n{transcript_text}\n</transcript>"
+            output_file = tmp / "summary.json"
 
             args = [self._executable, "exec"]
 
@@ -142,20 +139,28 @@ class CodexAdapter(SummarizerAdapter):
                 args.append("--ephemeral")
             if self._skip_git_repo_check:
                 args.append("--skip-git-repo-check")
+            if self._ignore_user_config:
+                args.append("--ignore-user-config")
+            if self._ignore_rules:
+                args.append("--ignore-rules")
             if schema_path and schema_path.exists():
                 args.extend(["--output-schema", str(schema_path.resolve())])
             if self._model:
                 args.extend(["--model", self._model])
             if self._reasoning_effort:
-                args.extend(["--reasoning-effort", self._reasoning_effort])
+                effort = json.dumps(self._reasoning_effort)
+                args.extend(["--config", f"model_reasoning_effort={effort}"])
 
-            args.append(full_prompt)
+            args.extend(self._extra_args)
+            args.extend(["--output-last-message", str(output_file), prompt])
 
             result = run_command(
                 args,
                 timeout=timeout_seconds,
                 cwd=tmp_dir,
+                input_text=transcript_text,
                 label="codex-summarize",
+                redact_args={len(args) - 1},
             )
 
             if not result.returncode == 0:
@@ -164,10 +169,18 @@ class CodexAdapter(SummarizerAdapter):
                     f"  stderr: {result.stderr[:2000]}"
                 )
 
+            output = (
+                output_file.read_text(encoding="utf-8")
+                if output_file.exists()
+                else result.stdout
+            )
+            if not output.strip():
+                raise RuntimeError("Codex CLI returned empty output")
+
             return SummaryResult(
-                data=self._parse_json_output(result.stdout),
+                data=self._parse_json_output(output),
                 backend=self.name,
-                raw_output=result.stdout[:5000],
+                raw_output=output[:5000],
             )
 
 
@@ -226,6 +239,7 @@ class OpenCodeAdapter(SummarizerAdapter):
                 cwd=tmp_dir,
                 input_text=transcript_text,
                 label="opencode-summarize",
+                redact_args={args.index("--prompt") + 1},
             )
 
             if not result.returncode == 0:
@@ -295,6 +309,7 @@ class MimoCodeAdapter(SummarizerAdapter):
                 cwd=tmp_dir,
                 input_text=transcript_text,
                 label="mimo-summarize",
+                redact_args={len(args) - 1},
             )
 
             if not result.returncode == 0:
@@ -364,6 +379,7 @@ class ClaudeCodeAdapter(SummarizerAdapter):
                 cwd=tmp_dir,
                 input_text=transcript_text,
                 label="claude-summarize",
+                redact_args={len(args) - 1},
             )
 
             if not result.returncode == 0:
@@ -443,6 +459,10 @@ _adapters: dict[str, type[SummarizerAdapter]] = {
     "local_command": LocalCommandAdapter,
 }
 
+_adapter_aliases = {
+    "codex_cli": "codex",
+}
+
 
 def register_adapter(name: str, cls: type[SummarizerAdapter]) -> None:
     """Register a custom summarizer adapter."""
@@ -454,13 +474,14 @@ def get_adapter(name: str, **kwargs: Any) -> SummarizerAdapter:
 
     Falls back to 'none' if the requested adapter is not available.
     """
-    if name not in _adapters:
+    canonical_name = _adapter_aliases.get(name, name)
+    if canonical_name not in _adapters:
         raise ValueError(
             f"Unknown summarizer adapter: '{name}'. "
-            f"Available: {', '.join(_adapters.keys())}"
+            f"Available: {', '.join([*_adapters.keys(), *_adapter_aliases.keys()])}"
         )
 
-    return _adapters[name](**kwargs)
+    return _adapters[canonical_name](**kwargs)
 
 
 def detect_available_adapters() -> dict[str, bool]:

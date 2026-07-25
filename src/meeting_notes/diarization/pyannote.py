@@ -2,12 +2,21 @@
 
 from __future__ import annotations
 
-import os
-from pathlib import Path
+import warnings
+import wave
+from typing import TYPE_CHECKING
 
 import structlog
 
-from meeting_notes.diarization.base import DiarizationBackend, DiarizationResult, DiarizationTurn
+from meeting_notes.diarization.base import (
+    DiarizationBackend,
+    DiarizationResult,
+    DiarizationTurn,
+)
+from meeting_notes.diarization.setup import resolve_hf_token
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -22,11 +31,13 @@ class PyannoteDiarizationBackend(DiarizationBackend):
     def __init__(
         self,
         model_name: str = "pyannote/speaker-diarization-community-1",
+        model_path: Path | None = None,
         token_env: str = "HF_TOKEN",
         device: str = "auto",
         use_exclusive: bool = True,
     ) -> None:
         self._model_name = model_name
+        self._model_path = model_path
         self._token_env = token_env
         self._device = device
         self._use_exclusive = use_exclusive
@@ -36,20 +47,28 @@ class PyannoteDiarizationBackend(DiarizationBackend):
     def name(self) -> str:
         return "pyannote"
 
+    @property
+    def model_source(self) -> str:
+        """Configured local pipeline path or remote model identifier."""
+        return str(self._model_path) if self._model_path else self._model_name
+
     def is_available(self) -> bool:
         """Check if pyannote.audio is installed and HF token is set."""
         try:
-            import pyannote.audio  # noqa: F401
+            from importlib.metadata import version
 
-            token = os.environ.get(self._token_env, "")
-            if not token:
+            version("pyannote.audio")
+
+            local_model_ready = bool(self._model_path and self._model_path.exists())
+            token, _ = resolve_hf_token(self._token_env)
+            if not local_model_ready and not token:
                 log.warning(
                     "pyannote.token_missing",
                     env_var=self._token_env,
                 )
                 return False
             return True
-        except ImportError:
+        except Exception:
             return False
 
     def _load_pipeline(self) -> None:
@@ -57,24 +76,35 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         if self._pipeline is not None:
             return
 
-        from pyannote.audio import Pipeline
+        with warnings.catch_warnings():
+            # The application supplies decoded waveform tensors, so pyannote's
+            # optional TorchCodec decoder is not used.
+            warnings.filterwarnings(
+                "ignore",
+                message=r"(?s)\s*torchcodec is not installed correctly.*",
+                category=UserWarning,
+                module=r"pyannote\.audio\.core\.io",
+            )
+            from pyannote.audio import Pipeline
 
-        token = os.environ.get(self._token_env, "")
-        if not token:
+        local_model_ready = bool(self._model_path and self._model_path.exists())
+        token, _ = resolve_hf_token(self._token_env)
+        if not local_model_ready and not token:
             raise RuntimeError(
-                f"Hugging Face token not found. Set {self._token_env} environment variable."
+                f"No local diarization model found and Hugging Face token is missing. "
+                f"Set diarization.model_path or the {self._token_env} environment variable."
             )
 
         log.info(
             "pyannote.loading",
-            model=self._model_name,
+            model=self.model_source,
             device=self._device,
         )
 
-        self._pipeline = Pipeline.from_pretrained(
-            self._model_name,
-            use_auth_token=token,
-        )
+        if local_model_ready:
+            self._pipeline = Pipeline.from_pretrained(str(self._model_path))
+        else:
+            self._pipeline = Pipeline.from_pretrained(self._model_name, token=token)
 
         if self._device != "auto":
             self._pipeline.to(self._device)
@@ -109,20 +139,44 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         )
 
         # Run diarization
-        diarization = self._pipeline(str(audio_path), **params)
+        with warnings.catch_warnings():
+            # Pyannote can produce a harmless degrees-of-freedom warning for
+            # very short internal windows. It does not invalidate the completed
+            # diarization result.
+            warnings.filterwarnings(
+                "ignore",
+                message=r"std\(\): degrees of freedom is <= 0\..*",
+                category=UserWarning,
+            )
+            diarization = self._pipeline(self._read_pcm_wave(audio_path), **params)
+        annotation = diarization
+        exclusive = getattr(diarization, "exclusive_speaker_diarization", None)
+        standard = getattr(diarization, "speaker_diarization", None)
+        if self._use_exclusive and exclusive is not None:
+            annotation = exclusive
+        elif standard is not None:
+            annotation = standard
 
         # Convert to our format
         turns: list[DiarizationTurn] = []
         speakers = set()
 
-        for turn_idx, (turn, _, speaker) in enumerate(diarization.itertracks(yield_label=True)):
+        if hasattr(annotation, "itertracks"):
+            tracks = (
+                (turn, speaker)
+                for turn, _, speaker in annotation.itertracks(yield_label=True)
+            )
+        else:
+            tracks = iter(annotation)
+
+        for turn_idx, (turn, speaker) in enumerate(tracks):
             turns.append(
                 DiarizationTurn(
                     turn_id=f"turn-{turn_idx:06d}",
                     start=turn.start,
                     end=turn.end,
                     speaker=speaker,
-                    source=self._model_name,
+                    source=self.model_source,
                 )
             )
             speakers.add(speaker)
@@ -136,7 +190,29 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         return DiarizationResult(
             turns=turns,
             backend=self.name,
-            model=self._model_name,
+            model=self.model_source,
             device=self._device,
             speakers=sorted(speakers),
         )
+
+    @staticmethod
+    def _read_pcm_wave(audio_path: Path) -> dict[str, object]:
+        """Load the normalized PCM WAV without pyannote/TorchCodec decoding."""
+        import torch
+
+        with wave.open(str(audio_path), "rb") as stream:
+            channels = stream.getnchannels()
+            sample_width = stream.getsampwidth()
+            sample_rate = stream.getframerate()
+            compression = stream.getcomptype()
+            frames = stream.readframes(stream.getnframes())
+
+        if sample_width != 2 or compression != "NONE":
+            raise RuntimeError(
+                "Diarization expects an uncompressed 16-bit PCM WAV. "
+                f"Got sample_width={sample_width}, compression={compression}."
+            )
+        samples = torch.frombuffer(bytearray(frames), dtype=torch.int16).clone()
+        waveform = samples.reshape(-1, channels).transpose(0, 1).to(torch.float32)
+        waveform /= 32768.0
+        return {"waveform": waveform, "sample_rate": sample_rate}

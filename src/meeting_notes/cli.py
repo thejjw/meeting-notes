@@ -52,6 +52,12 @@ def configure(
     no_configure: Annotated[
         bool, typer.Option("--no-configure", help="Fail immediately instead of opening wizard.")
     ] = False,
+    provision: Annotated[
+        bool, typer.Option("--provision", help="Install the selected runtime and model.")
+    ] = False,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm large downloads in non-interactive mode.")
+    ] = False,
 ) -> None:
     """Run the interactive configuration wizard or create safe defaults."""
     from meeting_notes.configure import run_configure
@@ -61,6 +67,8 @@ def configure(
         accept_defaults=accept_defaults,
         show_detected=show_detected,
         no_configure=no_configure,
+        provision=provision,
+        yes=yes,
     )
 
 
@@ -122,11 +130,15 @@ def doctor(
     output_json: Annotated[
         bool, typer.Option("--json", help="Output as JSON.")
     ] = False,
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    smoke_test: Annotated[
+        bool, typer.Option("--smoke-test", help="Load the configured model using a generated WAV.")
+    ] = False,
 ) -> None:
     """Run environment diagnostics."""
     from meeting_notes.configure import run_doctor
 
-    run_doctor(output_json=output_json)
+    run_doctor(output_json=output_json, config_path=config_path, smoke_test=smoke_test)
 
 
 # --- resources commands ---
@@ -163,11 +175,13 @@ def models_list() -> None:
 
 
 @models_app.command("status")
-def models_status() -> None:
+def models_status(
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
     """Show model download status."""
     from meeting_notes.configure import run_models_status
 
-    run_models_status()
+    run_models_status(output_json=output_json)
 
 
 @models_app.command("info")
@@ -186,22 +200,79 @@ def models_download(
     model: Annotated[str, typer.Argument(help="Model name.")],
     backend: Annotated[str, typer.Option("--backend")] = "whisper_cpp",
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
 ) -> None:
     """Download a model."""
     from meeting_notes.configure import run_models_download
 
-    run_models_download(model=model, backend=backend, yes=yes)
+    run_models_download(model=model, backend=backend, yes=yes, config_path=config_path)
 
 
 @models_app.command("verify")
 def models_verify(
     model: Annotated[str, typer.Argument(help="Model name.")],
     backend: Annotated[str, typer.Option("--backend")] = "whisper_cpp",
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
 ) -> None:
     """Verify a downloaded model."""
     from meeting_notes.configure import run_models_verify
 
-    run_models_verify(model=model, backend=backend)
+    run_models_verify(model=model, backend=backend, config_path=config_path)
+
+
+# --- runtime commands ---
+
+
+runtime_app = typer.Typer(help="Install and inspect managed whisper.cpp runtimes.")
+app.add_typer(runtime_app, name="runtime")
+
+
+@runtime_app.command("status")
+def runtime_status(
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+) -> None:
+    """Show managed runtime installations."""
+    from meeting_notes.configure import run_runtime_status
+
+    run_runtime_status(output_json=output_json)
+
+
+@runtime_app.command("install")
+def runtime_install(
+    device: Annotated[str, typer.Option("--device", help="cpu or vulkan")] = "cpu",
+    version: Annotated[str, typer.Option("--version")] = "v1.9.1",
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
+) -> None:
+    """Install a verified CPU runtime or build a Vulkan runtime."""
+    from meeting_notes.configure import run_runtime_install
+
+    run_runtime_install(device=device, version=version, config_path=config_path, yes=yes)
+
+
+# --- diarization commands ---
+
+
+diarization_app = typer.Typer(help="Set up and inspect speaker diarization.")
+app.add_typer(diarization_app, name="diarization")
+
+
+@diarization_app.command("setup")
+def diarization_setup(
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm model download.")] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Redownload an existing managed pipeline.")
+    ] = False,
+) -> None:
+    """Authenticate in a browser and provision the selected diarization model."""
+    from meeting_notes.diarization.setup import run_diarization_setup
+
+    try:
+        run_diarization_setup(config_path=config_path, yes=yes, force=force)
+    except RuntimeError as error:
+        console.print(f"[red]Diarization setup failed:[/red] {error}")
+        raise typer.Exit(1) from error
 
 
 # --- process command ---
@@ -343,6 +414,69 @@ def naming_finalize(
     from meeting_notes.pipeline import run_naming_finalize
 
     run_naming_finalize(job_dir=job_dir, config_path=config_path)
+
+
+# --- speaker identification commands ---
+
+speakers_app = typer.Typer(help="Identify speakers and regenerate downstream outputs.")
+app.add_typer(speakers_app, name="speakers")
+
+
+@speakers_app.command("template")
+def speakers_template(
+    job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
+    output: Annotated[Optional[str], typer.Option("--output", help="Template output path.")] = None,
+    force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+) -> None:
+    """Create an editable speaker identification template."""
+    del config_path  # Reserved for consistent command configuration.
+    from meeting_notes.speakers import SpeakerMapError, command_template
+
+    try:
+        command_template(job_dir, output, force)
+    except SpeakerMapError as error:
+        console.print(f"[red]Speaker template failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
+@speakers_app.command("apply")
+def speakers_apply(
+    job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
+    map_path: Annotated[Optional[str], typer.Option("--map", help="Speaker map path.")] = None,
+    cleanup: Annotated[bool, typer.Option("--cleanup", help="Remove tracked superseded publications.")] = False,
+    cleanup_all: Annotated[bool, typer.Option("--cleanup-all", help="Also remove reproducible upstream artifacts.")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm cleanup.")] = False,
+    local_only: Annotated[bool, typer.Option("--local-only", help="Reject remote summarizers.")] = False,
+    without_diarization: Annotated[
+        bool,
+        typer.Option(
+            "--without-diarization",
+            help="Remove speaker attribution and regenerate downstream outputs.",
+        ),
+    ] = False,
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+) -> None:
+    """Apply speaker names without rerunning transcription or diarization."""
+    if cleanup and cleanup_all:
+        console.print("[red]--cleanup and --cleanup-all are mutually exclusive.[/red]")
+        raise typer.Exit(2)
+    from meeting_notes.speakers import SpeakerMapError, command_apply
+
+    try:
+        command_apply(
+            job_dir,
+            map_path,
+            config_path,
+            cleanup,
+            cleanup_all,
+            yes,
+            local_only,
+            without_diarization,
+        )
+    except SpeakerMapError as error:
+        console.print(f"[red]Speaker apply failed:[/red] {error}")
+        raise typer.Exit(1) from error
 
 
 # --- benchmark command ---

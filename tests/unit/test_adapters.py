@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -18,6 +19,7 @@ from meeting_notes.summarization.adapters import (
     get_adapter,
     register_adapter,
 )
+from meeting_notes.pipeline import _format_summary_transcript
 
 
 class TestSummaryResult:
@@ -35,6 +37,11 @@ class TestAdapterRegistry:
 
     def test_get_adapter_codex(self) -> None:
         adapter = get_adapter("codex")
+        assert isinstance(adapter, CodexAdapter)
+        assert adapter.name == "codex"
+
+    def test_get_adapter_accepts_legacy_codex_cli_name(self) -> None:
+        adapter = get_adapter("codex_cli")
         assert isinstance(adapter, CodexAdapter)
         assert adapter.name == "codex"
 
@@ -92,6 +99,58 @@ class TestJSONParsing:
         adapter = CodexAdapter()
         with pytest.raises(RuntimeError, match="Could not extract JSON"):
             adapter._parse_json_output("no json here")
+
+
+def test_codex_transcript_uses_stdin_not_windows_command_line(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    schema.write_text("{}", encoding="utf-8")
+    transcript = "x" * 150_000
+    observed: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object):
+        from meeting_notes.subprocess_utils import SubprocessResult
+
+        observed["args"] = args
+        observed["input_text"] = kwargs.get("input_text")
+        observed["redact_args"] = kwargs.get("redact_args")
+        output_index = args.index("--output-last-message") + 1
+        Path(args[output_index]).write_text('{"title":"ok"}', encoding="utf-8")
+        return SubprocessResult(0, "", "", args)
+
+    adapter = CodexAdapter(
+        reasoning_effort="high",
+        ignore_user_config=True,
+        ignore_rules=True,
+        extra_args=["--color", "never"],
+    )
+    with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+        result = adapter.summarize(transcript, prompt="Summarize.", schema_path=schema)
+
+    args = observed["args"]
+    assert isinstance(args, list)
+    assert transcript not in args
+    assert observed["input_text"] == transcript
+    assert observed["redact_args"] == {len(args) - 1}
+    assert "--output-schema" in args
+    assert "--ignore-user-config" in args
+    assert "--ignore-rules" in args
+    assert "model_reasoning_effort=\"high\"" in args
+    assert result.data == {"title": "ok"}
+
+
+def test_summary_transcript_includes_stable_evidence_ids() -> None:
+    formatted = _format_summary_transcript(
+        [
+            {
+                "id": "seg-000123",
+                "start": 65.0,
+                "speaker": "SPEAKER_01",
+                "text": "Decision text",
+            }
+        ]
+    )
+
+    assert formatted == "[seg-000123] [00:01:05] [SPEAKER_01] Decision text"
 
 
 class TestLocalCommandAdapter:

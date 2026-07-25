@@ -17,7 +17,12 @@
         "backend": { "type": "string" },
         "model": { "type": "string" },
         "device": { "type": "string" },
-        "processed_at": { "type": "string" }
+        "processed_at": { "type": "string" },
+        "speaker_resolution": { "type": "string", "enum": ["mapped", "disabled"] },
+        "speaker_template_version": { "type": "integer" },
+        "anonymous_transcript_sha256": { "type": "string" },
+        "speaker_mapping_sha256": { "type": ["string", "null"] },
+        "participants": { "type": "array", "items": { "type": "string" } }
       }
     },
     "segments": {
@@ -33,6 +38,7 @@
           "text": { "type": "string" },
           "language": { "type": ["string", "null"] },
           "speaker": { "type": ["string", "null"] },
+          "speaker_id": { "type": ["string", "null"] },
           "confidence": { "type": ["number", "null"] },
           "metrics": {
             "type": "object",
