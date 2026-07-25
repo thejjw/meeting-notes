@@ -178,9 +178,18 @@ def test_claude_configured_model_and_effort_are_forwarded(tmp_path: Path) -> Non
 
     args = observed["args"]
     assert isinstance(args, list)
-    assert args[:5] == ["claude", "-p", "--output-format", "json", "--no-session-persistence"]
+    assert args[:7] == [
+        "claude",
+        "-p",
+        "--output-format",
+        "json",
+        "--no-session-persistence",
+        "--permission-mode",
+        "dontAsk",
+    ]
     assert args[args.index("--model") + 1] == "sonnet"
     assert args[args.index("--effort") + 1] == "medium"
+    assert args[-1] == "Follow the task instructions and transcript provided via stdin."
     assert result.data == {"title": "ok"}
 
 

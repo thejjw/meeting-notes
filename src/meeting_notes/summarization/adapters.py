@@ -24,6 +24,7 @@ from meeting_notes.subprocess_utils import run_command
 log = structlog.get_logger()
 _ENV_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 _SHELL_COMMAND = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
+_CLAUDE_STDIN_PROMPT = "Follow the task instructions and transcript provided via stdin."
 
 
 @dataclass
@@ -456,11 +457,19 @@ class ClaudeCodeAdapter(SummarizerAdapter):
         timeout_seconds: int = 1800,
         metadata: dict[str, Any] | None = None,
     ) -> SummaryResult:
-        provider_args = ["-p", "--output-format", "json", "--no-session-persistence"]
+        provider_args = [
+            "-p",
+            "--output-format",
+            "json",
+            "--no-session-persistence",
+            "--permission-mode",
+            "dontAsk",
+        ]
         if self._model:
             provider_args.extend(["--model", self._model])
         if self._effort:
             provider_args.extend(["--effort", self._effort])
+        schema_arg_index: int | None = None
         if schema_path and schema_path.exists():
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
             schema.pop("$schema", None)
@@ -471,6 +480,11 @@ class ClaudeCodeAdapter(SummarizerAdapter):
                 # has spaces only inside strings, where \u0020 is equivalent.
                 schema_text = schema_text.replace(" ", "\\u0020").replace('"', '\\"')
             provider_args.extend(["--json-schema", schema_text])
+            schema_arg_index = len(provider_args) - 1
+        # The instructions and transcript are piped via stdin (they can exceed
+        # CLI argument-length limits); a short positional prompt is still
+        # required, matching every documented `claude -p` usage pattern.
+        provider_args.append(_CLAUDE_STDIN_PROMPT)
         request_text = f"{prompt}\n\nTranscript:\n{transcript_text}"
 
         environment = _resolve_environment(self._environment)
@@ -492,10 +506,12 @@ class ClaudeCodeAdapter(SummarizerAdapter):
         elif self._launcher_execution == "posix_shell":
             command = shlex.quote(self._shell_command_name())
             args = ["bash", "-lc", f'{command} "$@"', "meeting-notes", *provider_args]
-            redacted = {len(args) - 1}
+            offset = len(args) - len(provider_args)
+            redacted = {offset + schema_arg_index} if schema_arg_index is not None else set()
         else:
             args = [self._executable, *provider_args]
-            redacted = {len(args) - 1}
+            offset = len(args) - len(provider_args)
+            redacted = {offset + schema_arg_index} if schema_arg_index is not None else set()
 
         with tempfile.TemporaryDirectory(prefix="meeting-notes-claude-") as tmp_dir:
             result = run_command(

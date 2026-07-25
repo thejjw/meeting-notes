@@ -327,6 +327,13 @@ behavior matters, or leave it null to inherit the provider default.
 When Codex or Claude is selected, the interactive configuration wizard offers
 provider default, low, medium, high, and a custom reasoning-effort value.
 
+The `claude` backend invokes `claude -p --output-format json --permission-mode dontAsk`,
+so the summarization call has no filesystem/Bash tool access beyond read-only
+commands — it only reads the transcript from stdin and returns JSON. It does
+**not** pass `--bare`, so your normal `~/.claude` OAuth login, hooks, and MCP
+servers still apply; if you rely on `claude login` rather than
+`ANTHROPIC_API_KEY`, this keeps working unchanged.
+
 ### Custom summarization agents
 
 Claude-compatible PowerShell functions can be used without enabling an
