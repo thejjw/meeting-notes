@@ -30,45 +30,41 @@ install assets. Large models require `--yes` in non-interactive use.
 
 ## Output Files
 
-After processing, output files appear in **two places**:
+Each successful publication receives a generation directory. Its root stays
+human-facing while machine-readable exports and operational metadata live in
+named subdirectories:
 
-### 1. Job Directory (internal)
-
-```
-data/meetings/YYYY-MM-DD-<topic>-<hash>/
-├── source/original.m4a          # Copy of recording
-├── audio/normalized.wav         # Processed audio
-├── asr/transcript.raw.json      # Full timestamped transcript
-├── asr/transcript.srt           # Subtitle file
-├── asr/transcript.vtt           # WebVTT subtitle
-├── transcript/transcript.merged.json  # Merged transcript
-├── summary/summary.json         # AI-generated summary
-├── output/minutes.md            # Meeting minutes
-└── output/finalized/            # ← FINAL OUTPUT FILES HERE
-    ├── 2026-07-22_topic-name.m4a
-    ├── 2026-07-22_topic-name_meeting-notes.md
-    └── 2026-07-22_topic-name_meeting-notes.json
-```
-
-### 2. Input Directory (finalized copies)
-
-The finalized files are also copied next to the original recording:
-
-```
-C:\Recordings\
-├── meeting.m4a                              # Original (unchanged)
-├── 2026-07-22_topic-name.m4a                # Finalized recording copy
-├── 2026-07-22_topic-name_meeting-notes.md   # ← THE MEETING MINUTES
-└── 2026-07-22_topic-name_meeting-notes.json # ← STRUCTURED SUMMARY
+```text
+data/meetings/YYYY-MM-DD-<topic>-<hash>/output/finalized/<generation>/
+├── 2026-07-22_topic-name.m4a
+├── 2026-07-22_topic-name_meeting-notes.md
+├── 2026-07-22_topic-name_transcript.md
+├── json/
+│   ├── 2026-07-22_topic-name_meeting-notes.json
+│   └── 2026-07-22_topic-name_transcript.json
+├── subtitles/
+│   ├── 2026-07-22_topic-name_transcript.srt
+│   └── 2026-07-22_topic-name_transcript.vtt
+└── run/
+    └── report.md
 ```
 
-### What Each File Contains
+`run/report.md` records concise provenance and stage results. It deliberately
+excludes credentials, environment values, prompts, transcript content, raw
+subprocess output, and stack traces. Failed attempts retain only a compact
+report under `output/runs/<run-id>/report.md`.
+
+With `process --copy-to-input`, the same relative layout is copied beside the
+original recording. Without that flag, the input directory is not modified.
 
 | File | Description |
 |------|-------------|
-| `*_meeting-notes.md` | **Main output** — formatted meeting minutes with summary, discussion topics, decisions, action items, evidence links |
-| `*_meeting-notes.json` | Structured JSON with all meeting data for programmatic use |
-| `*.m4a` | Finalized recording copy with date/topic filename |
+| `*_meeting-notes.md` | Main human-readable meeting minutes |
+| `*_transcript.md` | Timestamped human-readable transcript |
+| `json/*.json` | Structured summary and transcript |
+| `subtitles/*` | SRT and WebVTT captions |
+| `run/report.md` | Sanitized run provenance and concise status |
+| `*.m4a`, `*.wav`, etc. | Byte-preserving finalized recording copy |
 
 ### Example Output
 
@@ -203,6 +199,157 @@ Use `gpt-5.6-sol` or `opus` for quality-first runs. Claude's `sonnet` and
 use documented full IDs such as `gpt-5.6-terra`; bare `terra` is not a
 documented Codex alias. Set Codex `reasoning_effort` explicitly when stable
 behavior matters, or leave it null to inherit the provider default.
+
+### Custom summarization agents
+
+Claude-compatible PowerShell functions can be used without enabling an
+implicit shell for every command. For example, an artificial `claude-alt`
+function can configure a custom Claude Code endpoint:
+
+```powershell
+function claude-alt {
+    $savedUrl = $env:ANTHROPIC_BASE_URL
+    $savedToken = $env:ANTHROPIC_AUTH_TOKEN
+    $savedModel = $env:ANTHROPIC_DEFAULT_SONNET_MODEL
+    try {
+        $env:ANTHROPIC_BASE_URL = "https://example.invalid/anthropic"
+        $env:ANTHROPIC_AUTH_TOKEN = Get-MySecret "CLAUDE_ALT_TOKEN"
+        $env:ANTHROPIC_DEFAULT_SONNET_MODEL = "custom-balanced-model"
+        claude @args
+    }
+    finally {
+        $env:ANTHROPIC_BASE_URL = $savedUrl
+        $env:ANTHROPIC_AUTH_TOKEN = $savedToken
+        $env:ANTHROPIC_DEFAULT_SONNET_MODEL = $savedModel
+    }
+}
+```
+
+Configure it as an explicit Claude launcher:
+
+```yaml
+summarization:
+  backend: claude
+  claude:
+    executable: claude
+    model: null
+    launcher_execution: powershell
+    launcher_command: claude-alt
+```
+
+`model: null` means meeting-notes supplies no `--model`; the function,
+endpoint, or Claude settings choose the effective model. The function must be
+available in the PowerShell profile loaded by `powershell.exe`. POSIX functions
+can use `launcher_execution: posix_shell`.
+
+For a non-Claude agent, use `local_command`. Its default
+`request_json_v1` protocol writes one JSON object to stdin containing
+`protocol_version`, `task`, `prompt`, `transcript`, `schema`, and `metadata`.
+The command must write only the schema-conforming summary object to stdout:
+
+```yaml
+summarization:
+  backend: local_command
+  local_command:
+    protocol: request_json_v1
+    execution: direct
+    command: ["my-meeting-agent", "--json"]
+    environment:
+      MY_AGENT_TOKEN: ${MY_AGENT_TOKEN}
+```
+
+Use `execution: powershell` with `script: my-agent-function` or
+`execution: posix_shell` with a trusted shell expression. Existing integrations
+that expect only transcript text on stdin can select
+`protocol: transcript_stdin_v0`.
+
+Test an adapter using a small request that does not publish meeting files:
+
+```powershell
+uv run meeting-notes summarizers test
+```
+
+## Data Footprint and Cleanup
+
+meeting-notes keeps processing data local, but a complete run can accumulate
+recording copies, normalized audio, model files, transcripts, and several
+publication generations.
+
+### Project and job data
+
+Paths such as `data_dir`, `cache_dir`, and `model_cache_dir` are taken from the
+active configuration. Relative paths are resolved from the directory where the
+command is run. With the example defaults, the workspace contains:
+
+| Path | Contents |
+|------|----------|
+| `./data/meetings/<job>/source/` | Optional copy of the original recording |
+| `./data/meetings/<job>/audio/` | Normalized audio and chunks |
+| `./data/meetings/<job>/asr/` | Raw ASR JSON, Markdown, and subtitles |
+| `./data/meetings/<job>/diarization/` | Speaker turns and diarization artifacts |
+| `./data/meetings/<job>/transcript/` | Anonymous and currently named transcripts |
+| `./data/meetings/<job>/summary/` | Current structured summary |
+| `./data/meetings/<job>/output/` | Current minutes, publication generations, and compact run reports |
+| `./data/meetings/<job>/logs/` | Retained tool or build logs when produced |
+| `./cache/` and `./cache/models/` | Project-configured caches and model files |
+
+The job root also retains `manifest.json`, `speakers.yaml`, and speaker-template
+backups. The manifest contains paths, timestamps, checksums, configuration
+fingerprints, and publication provenance, but not API tokens.
+
+Useful cleanup choices are:
+
+```powershell
+# Regenerate successfully, then remove superseded files recorded in the manifest.
+uv run meeting-notes speakers apply JOB_DIR --map JOB_DIR/speakers.yaml --cleanup --yes
+
+# After successful regeneration, also remove reproducible source copies,
+# normalized audio, raw ASR, diarization artifacts, and logs.
+uv run meeting-notes speakers apply JOB_DIR --map JOB_DIR/speakers.yaml --cleanup-all --yes
+
+# Remove most derived data, including finalized output, while retaining source/.
+uv run meeting-notes clean JOB_DIR --yes
+```
+
+For speakerless jobs, replace `--map ...` with `--without-diarization`. Review
+the job directory before cleanup. Deleting an entire individual job directory
+is the complete scrub for that meeting; never delete the shared `data/`
+directory unless every contained job is intentionally disposable.
+
+### Per-user application data
+
+| Platform | Location | Contents |
+|----------|----------|----------|
+| Windows | `%APPDATA%\meeting-notes\config.yaml` | User configuration |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/meeting-notes/config.yaml` | User configuration |
+| Windows | `%LOCALAPPDATA%\meeting-notes\cache\` | Managed whisper.cpp runtimes, downloads, build logs, and managed diarization models |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/meeting-notes/` | The same managed cache |
+| All | `~/.cache/silero-vad/` | Silero VAD model when that backend downloads it |
+
+An explicit `--config`, `MEETING_NOTES_CONFIG`, or project-local
+`meeting-notes.yaml` may select a different configuration file. Inspect
+`meeting-notes config status` and `meeting-notes config show --resolved` before
+scrubbing.
+
+Managed cache directories can be removed after meeting-notes processes have
+stopped; required runtimes and models will need to be downloaded or rebuilt
+again. Removing the active configuration does not remove jobs or caches, and
+removing jobs does not remove the configuration or models.
+
+### Provider and development data
+
+Hugging Face login credentials and its download cache are managed by
+`huggingface_hub`, normally under `${HF_HOME:-~/.cache/huggingface}`. Claude,
+Codex, custom launchers, OS credential managers, Git, `uv`, and Python tooling
+may maintain their own configuration, authentication, caches, virtual
+environments, and history outside the paths above. meeting-notes does not copy
+those credentials into jobs or run reports. Use each provider's logout or
+credential-management command when credentials must also be scrubbed.
+
+Development commands may additionally create `.venv/`, `.pytest_cache/`,
+`.ruff_cache/`, and tool-specific caches in or outside the repository. These
+are not meeting records and may be removed when no development process is
+using them.
 
 ## Speaker Diarization
 

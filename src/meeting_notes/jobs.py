@@ -6,12 +6,13 @@ import hashlib
 import json
 import os
 import re
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -45,7 +46,7 @@ def make_job_slug(source_path: Path, title_hint: str | None = None) -> str:
         from datetime import datetime as dt
         date_str = dt.fromtimestamp(mtime).strftime("%Y-%m-%d")
     else:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         date_str = now.strftime("%Y-%m-%d")
 
     if title_hint:
@@ -83,6 +84,7 @@ def create_job_dir(data_dir: Path, slug: str, *, resume: bool = True) -> Path:
         "summary",
         "output",
         "output/finalized",
+        "output/runs",
         "logs",
     ]
     for sub in subdirs:
@@ -94,7 +96,7 @@ def create_job_dir(data_dir: Path, slug: str, *, resume: bool = True) -> Path:
 
 def _empty_manifest() -> dict[str, Any]:
     """Create an empty manifest structure."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     return {
         "version": 1,
         "created_at": now,
@@ -121,7 +123,7 @@ def load_manifest(job_dir: Path) -> dict[str, Any]:
 
 def save_manifest(job_dir: Path, manifest: dict[str, Any]) -> None:
     """Atomically save manifest to disk."""
-    manifest["updated_at"] = datetime.now(timezone.utc).isoformat()
+    manifest["updated_at"] = datetime.now(UTC).isoformat()
     manifest_path = job_dir / "manifest.json"
     tmp_path = manifest_path.with_suffix(".tmp")
 
@@ -146,11 +148,13 @@ def update_stage_status(
     error: str | None = None,
 ) -> None:
     """Update a stage's status in the manifest."""
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     stages = manifest.setdefault("stages", {})
     stage = stages.setdefault(stage_name, {})
 
     stage["status"] = status
+    if status in {"running", "completed", "skipped"} and error is None:
+        stage.pop("error", None)
 
     if status == "running":
         stage["started_at"] = now
@@ -200,6 +204,4 @@ def stage_is_stale(manifest: dict[str, Any], stage_name: str, current_fingerprin
 
     if saved_status != "completed":
         return True
-    if saved_fp and saved_fp != current_fingerprint:
-        return True
-    return False
+    return bool(saved_fp and saved_fp != current_fingerprint)

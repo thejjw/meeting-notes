@@ -6,7 +6,7 @@ import os
 import tempfile
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, model_validator
@@ -246,13 +246,39 @@ class ClaudeConfig(BaseModel):
 
     executable: str = "claude"
     model: str | None = None
+    environment: dict[str, str] = Field(default_factory=dict)
+    launcher_execution: Literal["direct", "powershell", "posix_shell"] = "direct"
+    launcher_command: str | None = None
+
+    @model_validator(mode="after")
+    def validate_launcher(self) -> ClaudeConfig:
+        if self.launcher_execution == "direct" and self.launcher_command:
+            raise ValueError("claude.launcher_command requires a shell launcher_execution")
+        if self.launcher_execution != "direct" and not self.launcher_command:
+            raise ValueError("claude.launcher_command is required for shell launchers")
+        return self
 
 
 class LocalCommandConfig(BaseModel):
     """Local command summarizer options."""
 
+    protocol: Literal["request_json_v1", "transcript_stdin_v0"] = "request_json_v1"
+    execution: Literal["direct", "powershell", "posix_shell"] = "direct"
     command: list[str] = Field(default_factory=list)
+    script: str | None = None
     environment: dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_execution(self) -> LocalCommandConfig:
+        if self.execution == "direct":
+            if self.script:
+                raise ValueError("local_command.script is only valid for shell execution")
+        else:
+            if self.command:
+                raise ValueError("local_command.command and shell execution are mutually exclusive")
+            if not self.script:
+                raise ValueError("local_command.script is required for shell execution")
+        return self
 
 
 class SummarizationConfig(BaseModel):

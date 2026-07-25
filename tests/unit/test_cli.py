@@ -46,6 +46,10 @@ class TestCLIBasic:
         result = runner.invoke(app, ["resources", "--help"])
         assert result.exit_code == 0
 
+    def test_summarizers_test_help(self) -> None:
+        result = runner.invoke(app, ["summarizers", "test", "--help"])
+        assert result.exit_code == 0
+
 
 class TestCLIConfigCommands:
     """Test config subcommands."""

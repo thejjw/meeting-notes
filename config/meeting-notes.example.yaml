@@ -170,8 +170,14 @@ summarization:
   claude:
     executable: claude
     model: sonnet
+    environment: {}
+    launcher_execution: direct
+    launcher_command: null
   local_command:
+    protocol: request_json_v1
+    execution: direct
     command: []
+    script: null
     environment: {}
 
 naming:

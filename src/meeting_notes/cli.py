@@ -479,6 +479,25 @@ def speakers_apply(
         raise typer.Exit(1) from error
 
 
+summarizers_app = typer.Typer(help="Inspect and test summarization adapters.")
+app.add_typer(summarizers_app, name="summarizers")
+
+
+@summarizers_app.command("test")
+def summarizers_test(
+    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    output_json: Annotated[bool, typer.Option("--json", help="Output JSON.")] = False,
+) -> None:
+    """Run a small schema-validated request without publishing files."""
+    from meeting_notes.summarizer_probe import run_summarizer_test
+
+    try:
+        run_summarizer_test(config_path=config_path, output_json=output_json)
+    except Exception as error:
+        console.print(f"[red]Summarizer test failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
 # --- benchmark command ---
 
 

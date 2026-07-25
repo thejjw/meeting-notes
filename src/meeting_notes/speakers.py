@@ -7,6 +7,7 @@ import json
 import os
 import shutil
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -20,6 +21,12 @@ from meeting_notes.jobs import load_manifest, save_manifest
 from meeting_notes.minutes.render import render_minutes
 from meeting_notes.naming import generate_filenames, resolve_date, sanitize_short_title
 from meeting_notes.pipeline import _format_summary_transcript
+from meeting_notes.publication import (
+    managed_files,
+    publication_paths,
+    render_transcript_variants,
+    write_run_report,
+)
 from meeting_notes.transcript.render import format_timestamp
 
 console = Console(stderr=True)
@@ -220,59 +227,6 @@ def load_mapping(job_dir: Path, map_path: Path) -> tuple[dict[str, str], dict[st
     return mapping, transcript, _sha256(transcript_path)
 
 
-def _render_named(data: dict[str, Any], directory: Path) -> dict[str, Path]:
-    paths = {
-        "transcript_json": directory / "transcript.named.json",
-        "transcript_markdown": directory / "transcript.named.md",
-        "transcript_srt": directory / "transcript.named.srt",
-        "transcript_vtt": directory / "transcript.named.vtt",
-    }
-    paths["transcript_json"].write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
-    md = ["# Named Transcript", ""]
-    srt: list[str] = []
-    vtt = ["WEBVTT", ""]
-    for index, segment in enumerate(data["segments"], 1):
-        name = str(segment.get("speaker") or segment.get("speaker_id") or "")
-        text = str(segment.get("text", ""))
-        start = float(segment.get("start", 0))
-        end = float(segment.get("end", start))
-        md.extend(
-            [
-                f"**[{format_timestamp(start)}--{format_timestamp(end)}] {name}**",
-                "",
-                text,
-                "",
-                f"<!-- {segment.get('id', '')} -->",
-                "",
-            ]
-        )
-        line = f"{name}: {text}" if name else text
-        srt.extend(
-            [
-                str(index),
-                (
-                    f"{format_timestamp(start, 'HH:MM:SS,mmm')} --> "
-                    f"{format_timestamp(end, 'HH:MM:SS,mmm')}"
-                ),
-                line,
-                "",
-            ]
-        )
-        vtt.extend(
-            [
-                f"{format_timestamp(start)} --> {format_timestamp(end)}",
-                line,
-                "",
-            ]
-        )
-    paths["transcript_markdown"].write_text("\n".join(md), encoding="utf-8")
-    paths["transcript_srt"].write_text("\n".join(srt), encoding="utf-8")
-    paths["transcript_vtt"].write_text("\n".join(vtt), encoding="utf-8")
-    return paths
-
-
 def _summarize(
     segments: list[dict[str, Any]],
     roster: list[str],
@@ -325,6 +279,10 @@ def _summarize(
         prompt=prompt,
         schema_path=schema,
         timeout_seconds=config.summarization.timeout_seconds,
+        metadata={
+            "language": config.summarization.language,
+            "speaker_resolution": speaker_resolution,
+        },
     ).data
     if speaker_resolution == "disabled":
         summary["participants"] = []
@@ -382,11 +340,40 @@ def _cleanup_paths(paths: list[str], job_dir: Path, *, allow_external: bool = Tr
                 continue
             if path.is_file() or path.is_symlink():
                 path.unlink()
+                if job_dir.resolve() in path.resolve().parents:
+                    parent = path.parent
+                    while parent != job_dir and parent.is_dir():
+                        try:
+                            parent.rmdir()
+                        except OSError:
+                            break
+                        parent = parent.parent
             elif path.is_dir():
                 shutil.rmtree(path)
         except OSError:
             residual.append(str(path))
     return residual
+
+
+def _speaker_apply_report_stages(
+    without_diarization: bool,
+) -> dict[str, dict[str, str]]:
+    """Describe the complete pipeline while distinguishing reused work."""
+    diarization_message = (
+        "existing labels removed"
+        if without_diarization
+        else "reused existing speaker labels"
+    )
+    return {
+        "prepare": {"status": "skipped", "message": "reused existing job"},
+        "transcribe": {"status": "skipped", "message": "reused merged transcript"},
+        "diarize": {"status": "skipped", "message": diarization_message},
+        "merge": {"status": "skipped", "message": "reused merged transcript"},
+        "named transcript": {"status": "completed"},
+        "summarize": {"status": "completed"},
+        "render": {"status": "completed"},
+        "finalize": {"status": "completed"},
+    }
 
 
 def apply_speakers(
@@ -440,11 +427,13 @@ def apply_speakers(
     manifest = load_manifest(job_dir)
     old_generations = manifest.get("speaker_publications", {}).get("generations", [])
     generation_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    started_at = datetime.now(UTC).isoformat()
     staging = job_dir / "output" / f".speakers-{generation_id}"
     generation = job_dir / "output" / "finalized" / generation_id
     staging.mkdir(parents=True)
     try:
-        transcript_paths = _render_named(named, staging)
+        render_dir = staging / ".render"
+        transcript_paths = render_transcript_variants(named, render_dir)
         summary = _summarize(
             named["segments"],
             roster,
@@ -485,29 +474,79 @@ def apply_speakers(
             transcript_srt_template=config.naming.transcript_srt_template,
             transcript_vtt_template=config.naming.transcript_vtt_template,
         )
-        renamed: dict[str, Path] = {}
+        layout = publication_paths(staging, names)
         for key, source in transcript_paths.items():
-            target = staging / names[key]
+            target = layout[key]
+            target.parent.mkdir(parents=True, exist_ok=True)
             source.rename(target)
-            renamed[key] = target
-        (staging / "minutes.md").rename(staging / names["minutes"])
-        (staging / "summary.json").rename(staging / names["json_export"])
-        _publish_recording(job_dir, staging / names["recording"], manifest)
+        shutil.rmtree(render_dir)
+        (staging / "minutes.md").rename(layout["minutes"])
+        layout["json_export"].parent.mkdir(parents=True, exist_ok=True)
+        (staging / "summary.json").rename(layout["json_export"])
+        _publish_recording(job_dir, layout["recording"], manifest)
+        relative_outputs = [
+            str(path.relative_to(staging))
+            for key, path in layout.items()
+            if key != "run_report" and path.exists()
+        ]
+        write_run_report(
+            layout["run_report"],
+            run_id=generation_id,
+            operation="speakers apply",
+            status="success",
+            started_at=started_at,
+            manifest=manifest,
+            config=config,
+            transcript_sha256=transcript_hash,
+            mapping_sha256=map_hash,
+            speaker_resolution=speaker_resolution,
+            outputs=relative_outputs,
+            messages=[f"Published {len(relative_outputs)} output files."],
+            stages=_speaker_apply_report_stages(without_diarization),
+            asr_activity="not run (reused merged transcript)",
+            diarization_activity=(
+                "not run (speaker labels removed)"
+                if without_diarization
+                else "not run (reused existing speaker labels)"
+            ),
+        )
         generation.parent.mkdir(parents=True, exist_ok=True)
         os.replace(staging, generation)
-    except Exception:
+    except Exception as error:
         shutil.rmtree(staging, ignore_errors=True)
+        with suppress(OSError):
+            write_run_report(
+                job_dir / "output" / "runs" / generation_id / "report.md",
+                run_id=generation_id,
+                operation="speakers apply",
+                status="failed",
+                started_at=started_at,
+                manifest=manifest,
+                config=config,
+                transcript_sha256=transcript_hash,
+                mapping_sha256=map_hash,
+                speaker_resolution=speaker_resolution,
+                error=error,
+                stages={},
+                asr_activity="not run (reused merged transcript)",
+                diarization_activity=(
+                    "not run (speaker labels removed)"
+                    if without_diarization
+                    else "not run (reused existing speaker labels)"
+                ),
+            )
         raise
 
-    managed = [str(path) for path in generation.iterdir()]
+    final_layout = publication_paths(generation, names)
+    managed = managed_files(generation)
     canonical_sources = {
-        job_dir / "transcript" / "transcript.named.json": generation / names["transcript_json"],
-        job_dir / "transcript" / "transcript.named.md": generation / names["transcript_markdown"],
-        job_dir / "transcript" / "transcript.named.srt": generation / names["transcript_srt"],
-        job_dir / "transcript" / "transcript.named.vtt": generation / names["transcript_vtt"],
-        job_dir / "summary" / "summary.json": generation / names["json_export"],
-        job_dir / "output" / "minutes.md": generation / names["minutes"],
-        job_dir / "output" / "summary.json": generation / names["json_export"],
+        job_dir / "transcript" / "transcript.named.json": final_layout["transcript_json"],
+        job_dir / "transcript" / "transcript.named.md": final_layout["transcript_markdown"],
+        job_dir / "transcript" / "transcript.named.srt": final_layout["transcript_srt"],
+        job_dir / "transcript" / "transcript.named.vtt": final_layout["transcript_vtt"],
+        job_dir / "summary" / "summary.json": final_layout["json_export"],
+        job_dir / "output" / "minutes.md": final_layout["minutes"],
+        job_dir / "output" / "summary.json": final_layout["json_export"],
     }
     for target, source in canonical_sources.items():
         _atomic_text(target, source.read_text(encoding="utf-8"))
@@ -576,6 +615,41 @@ def apply_speakers(
             "residual_paths": residual,
         }
         save_manifest(job_dir, manifest)
+        cleanup_mode = "all reproducible artifacts" if cleanup_all else "superseded outputs"
+        write_run_report(
+            final_layout["run_report"],
+            run_id=generation_id,
+            operation="speakers apply",
+            status="success" if not residual else "success_with_cleanup_errors",
+            started_at=started_at,
+            manifest=manifest,
+            config=config,
+            transcript_sha256=transcript_hash,
+            mapping_sha256=map_hash,
+            speaker_resolution=speaker_resolution,
+            outputs=relative_outputs,
+            error=(
+                "Cleanup residual paths: " + ", ".join(residual)
+                if residual
+                else None
+            ),
+            messages=[
+                f"Published {len(relative_outputs)} output files.",
+                f"Cleanup of {cleanup_mode} completed."
+                if not residual
+                else f"Cleanup of {cleanup_mode} left {len(residual)} residual path(s).",
+            ],
+            stages={
+                **_speaker_apply_report_stages(without_diarization),
+                "cleanup": {"status": "completed" if not residual else "failed"},
+            },
+            asr_activity="not run (reused merged transcript)",
+            diarization_activity=(
+                "not run (speaker labels removed)"
+                if without_diarization
+                else "not run (reused existing speaker labels)"
+            ),
+        )
     if residual:
         raise SpeakerMapError(
             "Publication succeeded, but cleanup failed for: " + ", ".join(residual)

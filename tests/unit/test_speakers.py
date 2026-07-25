@@ -96,6 +96,23 @@ def test_apply_writes_named_formats_and_generation(tmp_path: Path) -> None:
     manifest = load_manifest(job)
     assert manifest["speaker_publications"]["active_generation"] == generation["id"]
     assert all(Path(item).exists() for item in generation["managed_paths"])
+    recording = next(Path(item) for item in generation["managed_paths"] if item.endswith(".m4a"))
+    root = recording.parent
+    assert {path.name for path in root.iterdir()} == {
+        recording.name,
+        "2026-07-25_meeting_meeting-notes.md",
+        "2026-07-25_meeting_transcript.md",
+        "json",
+        "subtitles",
+        "run",
+    }
+    assert (root / "json" / "2026-07-25_meeting_meeting-notes.json").exists()
+    assert (root / "json" / "2026-07-25_meeting_transcript.json").exists()
+    assert (root / "subtitles" / "2026-07-25_meeting_transcript.srt").exists()
+    assert (root / "subtitles" / "2026-07-25_meeting_transcript.vtt").exists()
+    report = (root / "run" / "report.md").read_text(encoding="utf-8")
+    assert "Status: `success`" in report
+    assert "Speaker resolution: `mapped`" in report
 
 
 def test_apply_without_diarization_needs_no_map(tmp_path: Path) -> None:
@@ -116,6 +133,18 @@ def test_apply_without_diarization_needs_no_map(tmp_path: Path) -> None:
     assert generation["speaker_resolution"] == "disabled"
     assert generation["mapping_sha256"] is None
     assert manifest["speaker_template"]["active_mapping_sha256"] is None
+    recording = next(Path(item) for item in generation["managed_paths"] if item.endswith(".m4a"))
+    report = (recording.parent / "run" / "report.md").read_text(encoding="utf-8")
+    assert "ASR: `not run (reused merged transcript)`" in report
+    assert "Diarization: `not run (speaker labels removed)`" in report
+    assert "`prepare`: skipped — reused existing job" in report
+    assert "`transcribe`: skipped — reused merged transcript" in report
+    assert "`diarize`: skipped — existing labels removed" in report
+    assert "`merge`: skipped — reused merged transcript" in report
+    assert "`named transcript`: completed" in report
+    assert "`summarize`: completed" in report
+    assert "`render`: completed" in report
+    assert "`finalize`: completed" in report
 
 
 def test_disabled_mode_preserves_template_and_can_switch_back(tmp_path: Path) -> None:
@@ -192,3 +221,50 @@ def test_disabled_summary_prompt_and_identity_fields_are_enforced(
 
     assert summary["participants"] == []
     assert summary["action_items"][0]["owner"] is None
+
+
+def test_failed_apply_retains_only_compact_run_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = _job(tmp_path)
+    config = MeetingNotesConfig(summarization={"enabled": False})
+
+    def fail(*args: object, **kwargs: object) -> dict[str, object]:
+        del args, kwargs
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("meeting_notes.speakers._summarize", fail)
+    with pytest.raises(RuntimeError, match="provider unavailable"):
+        apply_speakers(job, None, config, without_diarization=True)
+
+    reports = list((job / "output" / "runs").glob("*/report.md"))
+    assert len(reports) == 1
+    report = reports[0].read_text(encoding="utf-8")
+    assert "Status: `failed`" in report
+    assert "provider unavailable" in report
+    assert not list((job / "output").glob(".speakers-*"))
+
+
+def test_cleanup_removes_superseded_nested_generation(tmp_path: Path) -> None:
+    job = _job(tmp_path)
+    config = MeetingNotesConfig(summarization={"enabled": False})
+    first = apply_speakers(job, None, config, without_diarization=True)
+    first_root = job / "output" / "finalized" / first["id"]
+
+    second = apply_speakers(
+        job,
+        None,
+        config,
+        without_diarization=True,
+        cleanup=True,
+    )
+
+    assert not first_root.exists()
+    assert all(Path(item).exists() for item in second["managed_paths"])
+    manifest = load_manifest(job)
+    assert manifest["speaker_publications"]["active_generation"] == second["id"]
+    report = (
+        job / "output" / "finalized" / second["id"] / "run" / "report.md"
+    ).read_text(encoding="utf-8")
+    assert "Cleanup of superseded outputs completed." in report

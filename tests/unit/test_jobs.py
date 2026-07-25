@@ -57,6 +57,7 @@ class TestJobDirectory:
         assert (job_dir / "transcript").exists()
         assert (job_dir / "summary").exists()
         assert (job_dir / "output").exists()
+        assert (job_dir / "output" / "runs").exists()
         assert (job_dir / "logs").exists()
 
     def test_create_job_dir_resume(self, tmp_path: Path) -> None:

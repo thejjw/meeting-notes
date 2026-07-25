@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import shutil
 import sys
+from contextlib import suppress
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -30,6 +33,12 @@ from meeting_notes.jobs import (
     save_manifest,
     stage_is_stale,
     update_stage_status,
+)
+from meeting_notes.publication import (
+    managed_files,
+    publication_paths,
+    render_transcript_variants,
+    write_run_report,
 )
 from meeting_notes.transcript.render import render_all_formats
 from meeting_notes.transcript.models import TranscriptDocument, TranscriptSegment
@@ -222,6 +231,8 @@ def run_pipeline(
     data_dir = Path(config.project.data_dir)
     job_dir = create_job_dir(data_dir, slug, resume=config.project.resume)
     manifest = load_manifest(job_dir)
+    run_id = datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    run_started_at = datetime.now(UTC).isoformat()
 
     # Copy source into job
     if config.project.copy_source_into_job:
@@ -289,19 +300,58 @@ def run_pipeline(
                 elif stage == "render":
                     manifest = _run_render(job_dir, manifest, config)
                 elif stage == "finalize":
-                    manifest = _run_finalize(job_dir, manifest, config, source, copy_to_input)
+                    manifest = _run_finalize(
+                        job_dir,
+                        manifest,
+                        config,
+                        source,
+                        copy_to_input,
+                        run_id=run_id,
+                        started_at=run_started_at,
+                    )
             except StageCancelledError:
                 console.print(f"\n[yellow]Stage '{stage}' cancelled.[/yellow]")
                 save_manifest(job_dir, manifest)
+                write_run_report(
+                    job_dir / "output" / "runs" / run_id / "report.md",
+                    run_id=run_id,
+                    operation="pipeline",
+                    status="cancelled",
+                    started_at=run_started_at,
+                    manifest=manifest,
+                    config=config,
+                    error=f"Stage '{stage}' was cancelled.",
+                )
                 raise typer.Exit(130)
             except Exception as e:
                 update_stage_status(manifest, stage, "failed", error=str(e))
                 save_manifest(job_dir, manifest)
+                with suppress(OSError):
+                    write_run_report(
+                        job_dir / "output" / "runs" / run_id / "report.md",
+                        run_id=run_id,
+                        operation="pipeline",
+                        status="failed",
+                        started_at=run_started_at,
+                        manifest=manifest,
+                        config=config,
+                        error=e,
+                    )
                 console.print(f"\n[red]Stage '{stage}' failed:[/red] {e}")
                 raise typer.Exit(1)
             progress.update(task, completed=True, description=f"[{i + 1}/{total}] {stage} done")
 
     save_manifest(job_dir, manifest)
+    if manifest.get("finalized", {}).get("generation_id") != run_id:
+        write_run_report(
+            job_dir / "output" / "runs" / run_id / "report.md",
+            run_id=run_id,
+            operation="pipeline",
+            status="success",
+            started_at=run_started_at,
+            manifest=manifest,
+            config=config,
+        )
     console.print(f"\n[green]Pipeline complete.[/green] Job: {job_dir}")
     template = job_dir.resolve() / "speakers.yaml"
     if template.exists():
@@ -780,6 +830,10 @@ def _run_summarize(
             prompt=prompt,
             schema_path=schema_path,
             timeout_seconds=config.summarization.timeout_seconds,
+            metadata={
+                "language": config.summarization.language,
+                "speaker_resolution": "diarized" if any(s.get("speaker") for s in segments) else "none",
+            },
         )
 
         # Save summary
@@ -865,15 +919,20 @@ def _run_finalize(
     config: MeetingNotesConfig,
     source: Path,
     copy_to_input: bool = False,
+    *,
+    run_id: str | None = None,
+    started_at: str | None = None,
 ) -> dict:
     """Stage: Finalize recording and note filenames."""
     update_stage_status(manifest, "finalize", "running")
+    run_id = run_id or datetime.now(UTC).strftime("%Y%m%dT%H%M%S%fZ")
+    started_at = started_at or datetime.now(UTC).isoformat()
+    staging = job_dir / "output" / f".finalize-{run_id}"
+    generation = job_dir / "output" / "finalized" / run_id
     try:
         import json
-        import shutil
         from meeting_notes.naming import (
             generate_filenames,
-            resolve_collision,
             resolve_date,
             sanitize_short_title,
         )
@@ -886,14 +945,10 @@ def _run_finalize(
             return manifest
 
         summary = json.loads(summary_path.read_text(encoding="utf-8"))
-
-        # Get short title from summary
         short_title = sanitize_short_title(
             summary.get("short_title", "meeting"),
             max_length=config.naming.max_short_title_characters,
         )
-
-        # Resolve date
         media_creation = manifest.get("source", {}).get("creation_time", "")
         source_mtime = source.stat().st_mtime if source.exists() else 0.0
         date, date_source = resolve_date(
@@ -902,86 +957,121 @@ def _run_finalize(
             source_mtime=source_mtime,
             source_order=config.naming.date_source_order,
         )
-
-        # Get original extension
         original_ext = source.suffix if source.exists() else ".m4a"
-
-        # Generate filenames
         filenames = generate_filenames(
             date,
             short_title,
             original_ext,
             recording_template=config.naming.recording_template,
             minutes_template=config.naming.minutes_template,
+            json_template=config.naming.json_export_template,
+            transcript_json_template=config.naming.transcript_json_template,
+            transcript_markdown_template=config.naming.transcript_markdown_template,
+            transcript_srt_template=config.naming.transcript_srt_template,
+            transcript_vtt_template=config.naming.transcript_vtt_template,
         )
-
         console.print(f"  Finalizing: {date} {short_title}")
+        staging.mkdir(parents=True)
+        layout = publication_paths(staging, filenames)
 
-        # Copy/renamed recording
+        transcript_path = job_dir / "transcript" / "transcript.merged.json"
+        if not transcript_path.exists():
+            transcript_path = job_dir / "asr" / "transcript.raw.json"
+        transcript_data = json.loads(transcript_path.read_text(encoding="utf-8"))
+        render_dir = staging / ".render"
+        rendered = render_transcript_variants(transcript_data, render_dir)
+        for key, rendered_path in rendered.items():
+            target = layout[key]
+            target.parent.mkdir(parents=True, exist_ok=True)
+            rendered_path.rename(target)
+        shutil.rmtree(render_dir)
+
         source_in_job = job_dir / "source" / source.name
         if source_in_job.exists() and config.naming.recording_mode != "none":
-            target_recording = job_dir / "output" / "finalized" / filenames["recording"]
-            target_recording.parent.mkdir(parents=True, exist_ok=True)
-
             if config.naming.recording_mode == "in_place":
-                # Rename original in its directory
                 new_path = source.parent / filenames["recording"]
+                from meeting_notes.naming import resolve_collision
+
                 new_path = resolve_collision(new_path, policy=config.naming.collision_policy)
                 os.rename(str(source), str(new_path))
                 console.print(f"  Renamed: {source.name} -> {new_path.name}")
                 manifest["source"]["finalized_path"] = str(new_path)
             else:
-                # managed_copy: copy to finalized dir
-                target_recording = resolve_collision(
-                    target_recording, policy=config.naming.collision_policy
-                )
-                shutil.copy2(source_in_job, target_recording)
-                console.print(f"  Copied: -> {target_recording.name}")
+                shutil.copy2(source_in_job, layout["recording"])
+                console.print(f"  Copied: -> {layout['recording'].name}")
 
-        # Copy minutes to finalized
         minutes_src = job_dir / "output" / "minutes.md"
         if minutes_src.exists():
-            target_minutes = job_dir / "output" / "finalized" / filenames["minutes"]
-            target_minutes.parent.mkdir(parents=True, exist_ok=True)
-            target_minutes = resolve_collision(
-                target_minutes, policy=config.naming.collision_policy
-            )
-            shutil.copy2(minutes_src, target_minutes)
-            console.print(f"  Copied: -> {target_minutes.name}")
+            shutil.copy2(minutes_src, layout["minutes"])
+            console.print(f"  Copied: -> {layout['minutes'].name}")
 
-        # Copy summary to finalized
         summary_src = job_dir / "output" / "summary.json"
         if summary_src.exists():
-            target_summary = job_dir / "output" / "finalized" / filenames["json_export"]
-            target_summary.parent.mkdir(parents=True, exist_ok=True)
-            target_summary = resolve_collision(
-                target_summary, policy=config.naming.collision_policy
-            )
-            shutil.copy2(summary_src, target_summary)
-            console.print(f"  Copied: -> {target_summary.name}")
+            layout["json_export"].parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(summary_src, layout["json_export"])
+            console.print(f"  Copied: -> json/{layout['json_export'].name}")
 
-        # Update manifest
+        relative_outputs = [
+            str(path.relative_to(staging))
+            for key, path in layout.items()
+            if key != "run_report" and path.exists()
+        ]
+        update_stage_status(manifest, "finalize", "completed")
+        write_run_report(
+            layout["run_report"],
+            run_id=run_id,
+            operation="pipeline",
+            status="success",
+            started_at=started_at,
+            manifest=manifest,
+            config=config,
+            transcript_sha256=hashlib.sha256(transcript_path.read_bytes()).hexdigest(),
+            speaker_resolution=(
+                "diarized"
+                if any(item.get("speaker") for item in transcript_data.get("segments", []))
+                else "none"
+            ),
+            outputs=relative_outputs,
+            messages=[f"Published {len(relative_outputs)} output files."],
+        )
+        generation.parent.mkdir(parents=True, exist_ok=True)
+        os.replace(staging, generation)
+        external_paths: list[str] = []
+
+        if copy_to_input and source.exists():
+            for published in (path for path in generation.rglob("*") if path.is_file()):
+                relative = published.relative_to(generation)
+                target = source.parent / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(published, target)
+                external_paths.append(str(target))
+                console.print(f"  Copied to input dir: {relative}")
+
         manifest["finalized"] = {
+            "generation_id": run_id,
+            "root": str(generation),
             "date": date,
             "date_source": date_source,
             "short_title": short_title,
             "filenames": filenames,
+            "managed_paths": managed_files(generation),
+            "external_paths": external_paths,
         }
-
-        # Optionally copy finalized files next to input recording
-        if copy_to_input and source.exists():
-            finalized_dir = job_dir / "output" / "finalized"
-            if finalized_dir.exists():
-                for f in finalized_dir.iterdir():
-                    if f.is_file():
-                        target = source.parent / f.name
-                        shutil.copy2(f, target)
-                        console.print(f"  Copied to input dir: {f.name}")
-
-        update_stage_status(manifest, "finalize", "completed")
         return manifest
-    except Exception:
+    except Exception as error:
+        shutil.rmtree(staging, ignore_errors=True)
         update_stage_status(manifest, "finalize", "failed")
+        with suppress(OSError):
+            write_run_report(
+                job_dir / "output" / "runs" / run_id / "report.md",
+                run_id=run_id,
+                operation="pipeline",
+                status="failed",
+                started_at=started_at,
+                manifest=manifest,
+                config=config,
+                error=error,
+            )
         raise
 
 
@@ -1060,7 +1150,9 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
     from meeting_notes.naming import generate_filenames, sanitize_short_title, resolve_date
 
     config = _load_or_fail(config_path)
-    summary_path = Path(job_dir) / "summary" / "summary.json"
+    job_path = Path(job_dir)
+    manifest = load_manifest(job_path)
+    summary_path = job_path / "summary" / "summary.json"
 
     if not summary_path.exists():
         console.print("[yellow]No summary found. Run summarize first.[/yellow]")
@@ -1080,6 +1172,11 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
         original_ext,
         recording_template=config.naming.recording_template,
         minutes_template=config.naming.minutes_template,
+        json_template=config.naming.json_export_template,
+        transcript_json_template=config.naming.transcript_json_template,
+        transcript_markdown_template=config.naming.transcript_markdown_template,
+        transcript_srt_template=config.naming.transcript_srt_template,
+        transcript_vtt_template=config.naming.transcript_vtt_template,
     )
 
     console.print(f"\n[bold]Filename preview[/bold]")
@@ -1088,7 +1185,12 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
     console.print(f"  Short title: {short_title}")
     console.print(f"  Recording: {filenames['recording']}")
     console.print(f"  Minutes: {filenames['minutes']}")
-    console.print(f"  JSON export: {filenames['json_export']}")
+    console.print(f"  Transcript: {filenames['transcript_markdown']}")
+    console.print(f"  Summary JSON: json/{filenames['json_export']}")
+    console.print(f"  Transcript JSON: json/{filenames['transcript_json']}")
+    console.print(f"  SRT: subtitles/{filenames['transcript_srt']}")
+    console.print(f"  VTT: subtitles/{filenames['transcript_vtt']}")
+    console.print("  Run report: run/report.md")
 
 
 def run_naming_finalize(job_dir: str, config_path: str | None = None) -> None:

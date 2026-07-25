@@ -149,6 +149,8 @@ def test_provider_options_preserve_null_defaults() -> None:
         "backend": "codex",
         "requested_model": None,
         "requested_reasoning_effort": None,
+        "execution": None,
+        "launcher": None,
     }
 
 
@@ -171,14 +173,21 @@ def test_claude_configured_model_is_forwarded(tmp_path: Path) -> None:
 
     args = observed["args"]
     assert isinstance(args, list)
-    assert args[:4] == ["claude", "-p", "--model", "sonnet"]
+    assert args[:5] == ["claude", "-p", "--output-format", "json", "--no-session-persistence"]
+    assert args[args.index("--model") + 1] == "sonnet"
     assert result.data == {"title": "ok"}
 
 
 def test_claude_null_model_omits_model_flag() -> None:
     config = MeetingNotesConfig(summarization={"backend": "claude"})
     options = configured_adapter_options(config.summarization)
-    assert options == {"executable": "claude", "model": None}
+    assert options == {
+        "executable": "claude",
+        "model": None,
+        "environment": {},
+        "launcher_execution": "direct",
+        "launcher_command": None,
+    }
 
 
 def test_summary_transcript_includes_stable_evidence_ids() -> None:
@@ -206,3 +215,143 @@ class TestLocalCommandAdapter:
     def test_available_with_command(self) -> None:
         adapter = LocalCommandAdapter(command=["echo", "hello"])
         assert adapter.is_available() is True
+
+    def test_v1_protocol_sends_complete_request(self) -> None:
+        observed: dict[str, object] = {}
+
+        def fake_run(args: list[str], **kwargs: object):
+            from meeting_notes.subprocess_utils import SubprocessResult
+
+            observed["input"] = kwargs["input_text"]
+            return SubprocessResult(0, '{"title":"ok"}', "", args)
+
+        adapter = LocalCommandAdapter(command=["agent"])
+        with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+            adapter.summarize(
+                "회의 내용",
+                prompt="요약하세요",
+                metadata={"language": "ko"},
+            )
+
+        import json
+
+        request = json.loads(str(observed["input"]))
+        assert request == {
+            "protocol_version": 1,
+            "task": "meeting_summary",
+            "prompt": "요약하세요",
+            "transcript": "회의 내용",
+            "schema": None,
+            "metadata": {"language": "ko"},
+        }
+
+    def test_legacy_protocol_sends_only_transcript(self) -> None:
+        observed: dict[str, object] = {}
+
+        def fake_run(args: list[str], **kwargs: object):
+            from meeting_notes.subprocess_utils import SubprocessResult
+
+            observed["input"] = kwargs["input_text"]
+            return SubprocessResult(0, '{"title":"ok"}', "", args)
+
+        adapter = LocalCommandAdapter(
+            command=["agent"],
+            protocol="transcript_stdin_v0",
+        )
+        with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+            adapter.summarize("transcript", prompt="ignored")
+
+        assert observed["input"] == "transcript"
+
+    def test_powershell_execution_uses_encoded_command(self) -> None:
+        observed: dict[str, object] = {}
+
+        def fake_run(args: list[str], **kwargs: object):
+            from meeting_notes.subprocess_utils import SubprocessResult
+
+            observed["args"] = args
+            return SubprocessResult(0, '{"title":"ok"}', "", args)
+
+        adapter = LocalCommandAdapter(
+            execution="powershell",
+            script="custom-agent",
+        )
+        with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+            adapter.summarize("transcript", prompt="prompt")
+
+        args = observed["args"]
+        assert isinstance(args, list)
+        assert args[:3] == ["powershell.exe", "-NoLogo", "-EncodedCommand"]
+
+    def test_schema_validation_reports_json_path(self, tmp_path: Path) -> None:
+        schema = tmp_path / "schema.json"
+        schema.write_text(
+            '{"type":"object","required":["title"],'
+            '"properties":{"title":{"type":"string"}}}',
+            encoding="utf-8",
+        )
+
+        def fake_run(args: list[str], **kwargs: object):
+            from meeting_notes.subprocess_utils import SubprocessResult
+
+            return SubprocessResult(0, '{"title":42}', "", args)
+
+        adapter = LocalCommandAdapter(command=["agent"])
+        with (
+            patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run),
+            pytest.raises(RuntimeError, match="validation failed at title"),
+        ):
+            adapter.summarize("transcript", prompt="prompt", schema_path=schema)
+
+    def test_missing_environment_reference_fails_without_exposing_value(self) -> None:
+        adapter = LocalCommandAdapter(
+            command=["agent"],
+            environment={"AGENT_TOKEN": "${MEETING_NOTES_TEST_MISSING_TOKEN}"},
+        )
+        with pytest.raises(RuntimeError, match="references missing"):
+            adapter.summarize("transcript", prompt="prompt")
+
+
+def test_claude_structured_output_and_powershell_launcher(tmp_path: Path) -> None:
+    schema = tmp_path / "schema.json"
+    schema.write_text(
+        '{"$schema":"https://json-schema.org/draft/2020-12/schema",'
+        '"type":"object","required":["title"],'
+        '"properties":{"title":{"type":"string"}}}',
+        encoding="utf-8",
+    )
+    observed: dict[str, object] = {}
+
+    def fake_run(args: list[str], **kwargs: object):
+        from meeting_notes.subprocess_utils import SubprocessResult
+
+        observed["args"] = args
+        observed["env"] = kwargs["env"]
+        observed["input"] = kwargs["input_text"]
+        return SubprocessResult(
+            0,
+            'setup notice\n{"structured_output":{"title":"성공"},"is_error":false}',
+            "",
+            args,
+        )
+
+    adapter = ClaudeCodeAdapter(
+        model=None,
+        launcher_execution="powershell",
+        launcher_command="claudemm",
+    )
+    with patch("meeting_notes.summarization.adapters.run_command", side_effect=fake_run):
+        result = adapter.summarize("transcript", prompt="prompt", schema_path=schema)
+
+    args = observed["args"]
+    assert isinstance(args, list)
+    assert args[:3] == ["powershell.exe", "-NoLogo", "-EncodedCommand"]
+    env = observed["env"]
+    assert isinstance(env, dict)
+    assert "--model" not in str(env["MEETING_NOTES_CLAUDE_ARGS"])
+    import json
+
+    provider_args = json.loads(str(env["MEETING_NOTES_CLAUDE_ARGS"]))
+    assert '\\"type\\"' in provider_args[provider_args.index("--json-schema") + 1]
+    assert observed["input"] == "prompt\n\nTranscript:\ntranscript"
+    assert result.data == {"title": "성공"}
