@@ -13,6 +13,7 @@ Rules:
 - Attach valid transcript segment IDs and timestamps to every decision and action item.
 - Prefer concise paraphrase over copying the full transcript.
 - Record ambiguous or suspicious transcription under transcription_uncertainties instead of guessing.
+- Record questions for human verification (ASR mishearings, missing action item owners/due dates, or ambiguous technical terms) under user_clarifications.
 - Do not treat casual discussion as an action item unless a concrete future task or commitment is stated.
 - When Korean and English are mixed, write natural Korean while preserving the original English terminology.
 

@@ -22,6 +22,7 @@ def render_minutes(
     include_action_items: bool = True,
     include_open_questions: bool = True,
     include_risks: bool = True,
+    include_user_clarifications: bool = True,
     include_evidence_links: bool = True,
     include_full_transcript_link: bool = True,
     unknown_value_text: str = "미정",
@@ -137,6 +138,27 @@ def render_minutes(
                 lines.append(f"  - 영향: {impact}")
             if mitigation:
                 lines.append(f"  - 대응방법: {mitigation}")
+        lines.append("")
+
+    # User clarifications & ASR corrections
+    if include_user_clarifications and summary.get("user_clarifications"):
+        lines.append("## 사용자 확인 및 정정")
+        lines.append("")
+        category_labels = {
+            "asr_correction": "ASR 정정",
+            "missing_info": "정보 확인",
+            "term_clarification": "용어 확인",
+        }
+        for item in summary["user_clarifications"]:
+            cat = category_labels.get(item.get("category", ""), "확인 요청")
+            question = item.get("question", "")
+            suggestion = item.get("suggested_correction")
+            sugg_text = f" (추천 정정: `{suggestion}`)" if suggestion else ""
+            lines.append(f"- [ ] **[{cat}]** {question}{sugg_text}")
+            if include_evidence_links and item.get("evidence"):
+                evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"])
+                lines.append(f"  - 근거: {evidence}")
+            lines.append("  - 답변: ")
         lines.append("")
 
     # Transcription uncertainties

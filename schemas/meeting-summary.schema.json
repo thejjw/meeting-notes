@@ -4,7 +4,7 @@
   "description": "Structured meeting minutes generated from a transcript.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["title", "short_title", "meeting_date", "participants", "agenda", "executive_summary", "discussion_topics", "decisions", "action_items", "open_questions", "risks", "notable_dates_and_numbers", "transcription_uncertainties"],
+  "required": ["title", "short_title", "meeting_date", "participants", "agenda", "executive_summary", "discussion_topics", "decisions", "action_items", "open_questions", "risks", "notable_dates_and_numbers", "transcription_uncertainties", "user_clarifications"],
   "properties": {
     "title": {
       "type": "string",
@@ -168,6 +168,26 @@
         "required": ["description", "evidence"],
         "properties": {
           "description": { "type": "string" },
+          "evidence": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        }
+      }
+    },
+    "user_clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "question", "suggested_correction", "evidence"],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": ["asr_correction", "missing_info", "term_clarification"]
+          },
+          "question": { "type": "string" },
+          "suggested_correction": { "type": ["string", "null"] },
           "evidence": {
             "type": "array",
             "items": { "type": "string" }

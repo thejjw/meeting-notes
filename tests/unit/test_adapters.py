@@ -376,3 +376,32 @@ def test_claude_structured_output_and_powershell_launcher(tmp_path: Path) -> Non
     assert '\\"type\\"' in provider_args[provider_args.index("--json-schema") + 1]
     assert observed["input"] == "prompt\n\nTranscript:\ntranscript"
     assert result.data == {"title": "성공"}
+
+
+def test_schema_validation_with_user_clarifications() -> None:
+    schema_path = Path("schemas/meeting-summary.schema.json")
+    adapter = CodexAdapter()
+    data = {
+        "title": "API Auth Meeting",
+        "short_title": "API-Auth",
+        "meeting_date": "2026-07-25",
+        "participants": [],
+        "agenda": [],
+        "executive_summary": ["Executive summary point"],
+        "discussion_topics": [],
+        "decisions": [],
+        "action_items": [],
+        "open_questions": [],
+        "risks": [],
+        "notable_dates_and_numbers": [],
+        "transcription_uncertainties": [],
+        "user_clarifications": [
+            {
+                "category": "asr_correction",
+                "question": "Is 'ArgoCD' the intended tool?",
+                "suggested_correction": "ArgoCD",
+                "evidence": ["seg-000001"],
+            }
+        ],
+    }
+    adapter._validate_output(data, schema_path)

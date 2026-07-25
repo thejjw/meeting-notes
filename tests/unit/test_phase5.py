@@ -144,6 +144,26 @@ class TestMinutesRendering:
         md = render_minutes({})
         assert "# " in md
 
+    def test_render_summary_with_user_clarifications(self) -> None:
+        summary = {
+            "title": "API Auth Meeting",
+            "short_title": "API Auth Review",
+            "meeting_date": "2026-07-22",
+            "user_clarifications": [
+                {
+                    "category": "asr_correction",
+                    "question": "Is 'ArgoCD' the correct spelling for '아르고 시디'?",
+                    "suggested_correction": "ArgoCD",
+                    "evidence": ["seg-000012"],
+                }
+            ],
+        }
+        md = render_minutes(summary)
+        assert "## 사용자 확인 및 정정" in md
+        assert "[ASR 정정]" in md
+        assert "ArgoCD" in md
+        assert "seg-000012" in md
+
 
 class TestTranscriptChunking:
     """Test transcript chunking for hierarchical summarization."""
