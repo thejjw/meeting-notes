@@ -167,11 +167,21 @@ class TestSummarizationWizard:
     def test_recommends_sonnet_for_claude(self) -> None:
         diagnostics = SystemDiagnostics()
         diagnostics.tools.claude_available = True
-        with patch("typer.prompt", side_effect=[1, 1]):
+        with patch("typer.prompt", side_effect=[1, 1, 1]):
             assert _prompt_summarization_config(diagnostics) == (
                 "claude",
                 "sonnet",
                 None,
+            )
+
+    def test_claude_effort_can_be_selected(self) -> None:
+        diagnostics = SystemDiagnostics()
+        diagnostics.tools.claude_available = True
+        with patch("typer.prompt", side_effect=[1, 1, 4]):
+            assert _prompt_summarization_config(diagnostics) == (
+                "claude",
+                "sonnet",
+                "high",
             )
 
     def test_provider_default_is_null(self) -> None:

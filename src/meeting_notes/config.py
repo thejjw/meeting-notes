@@ -246,6 +246,7 @@ class ClaudeConfig(BaseModel):
 
     executable: str = "claude"
     model: str | None = None
+    effort: str | None = None
     environment: dict[str, str] = Field(default_factory=dict)
     launcher_execution: Literal["direct", "powershell", "posix_shell"] = "direct"
     launcher_command: str | None = None

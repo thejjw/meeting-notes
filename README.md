@@ -145,6 +145,7 @@ summarization:
     reasoning_effort: null       # null inherits the Codex CLI default
   claude:
     model: sonnet                # floating alias; null inherits Claude settings
+    effort: null                 # null inherits the Claude Code default
 ```
 
 ## ASR Backends
@@ -192,6 +193,7 @@ summarization:
   backend: claude
   claude:
     model: sonnet
+    effort: null
 ```
 
 Use `gpt-5.6-sol` or `opus` for quality-first runs. Claude's `sonnet` and
@@ -199,8 +201,8 @@ Use `gpt-5.6-sol` or `opus` for quality-first runs. Claude's `sonnet` and
 use documented full IDs such as `gpt-5.6-terra`; bare `terra` is not a
 documented Codex alias. Set Codex `reasoning_effort` explicitly when stable
 behavior matters, or leave it null to inherit the provider default.
-When Codex is selected, the interactive configuration wizard offers provider
-default, low, medium, high, and a custom reasoning-effort value.
+When Codex or Claude is selected, the interactive configuration wizard offers
+provider default, low, medium, high, and a custom reasoning-effort value.
 
 ### Custom summarization agents
 

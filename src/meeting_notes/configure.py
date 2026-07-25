@@ -161,7 +161,7 @@ def _prompt_summarization_config(
             console.print("[red]Model ID cannot be blank.[/red]")
             raise typer.Exit(1)
     reasoning_effort: str | None = None
-    if backend == "codex":
+    if backend in {"codex", "claude"}:
         effort_choices = [
             (None, "Provider default (recommended)"),
             ("low", "Low (fastest and most economical)"),
@@ -169,7 +169,8 @@ def _prompt_summarization_config(
             ("high", "High (more thorough)"),
             ("custom", "Custom reasoning effort"),
         ]
-        console.print("\nCodex reasoning effort")
+        provider_label = "Codex" if backend == "codex" else "Claude"
+        console.print(f"\n{provider_label} reasoning effort")
         for index, (_, label) in enumerate(effort_choices, 1):
             console.print(f"  [{index}] {label}")
         effort_choice = typer.prompt("Select reasoning effort", default="1", type=int)
@@ -291,6 +292,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
             },
             "claude": {
                 "model": summarization_model if summarization_backend == "claude" else None,
+                "effort": reasoning_effort if summarization_backend == "claude" else None,
             },
         },
         naming={
@@ -315,8 +317,12 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         )
         console.print(f"  Summarization backend: {config.summarization.backend}")
         console.print(f"  Summarization model: {model or 'provider default'}")
-        if config.summarization.backend == "codex":
-            effort = config.summarization.codex.reasoning_effort
+        if config.summarization.backend in {"codex", "claude"}:
+            effort = (
+                config.summarization.codex.reasoning_effort
+                if config.summarization.backend == "codex"
+                else config.summarization.claude.effort
+            )
             console.print(f"  Reasoning effort: {effort or 'provider default'}")
     console.print(f"  Naming mode: {config.naming.recording_mode}")
     console.print(f"  Config path: {target}")

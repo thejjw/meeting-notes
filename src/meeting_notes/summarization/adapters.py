@@ -379,12 +379,14 @@ class ClaudeCodeAdapter(SummarizerAdapter):
         self,
         executable: str = "claude",
         model: str | None = None,
+        effort: str | None = None,
         environment: dict[str, str] | None = None,
         launcher_execution: str = "direct",
         launcher_command: str | None = None,
     ) -> None:
         self._executable = executable
         self._model = model
+        self._effort = effort
         self._environment = environment or {}
         self._launcher_execution = launcher_execution
         self._launcher_command = launcher_command
@@ -457,6 +459,8 @@ class ClaudeCodeAdapter(SummarizerAdapter):
         provider_args = ["-p", "--output-format", "json", "--no-session-persistence"]
         if self._model:
             provider_args.extend(["--model", self._model])
+        if self._effort:
+            provider_args.extend(["--effort", self._effort])
         if schema_path and schema_path.exists():
             schema = json.loads(schema_path.read_text(encoding="utf-8"))
             schema.pop("$schema", None)
@@ -666,6 +670,7 @@ def configured_adapter_options(config: Any) -> dict[str, Any]:
         return {
             "executable": options.executable,
             "model": options.model,
+            "effort": options.effort,
             "environment": options.environment,
             "launcher_execution": options.launcher_execution,
             "launcher_command": options.launcher_command,
@@ -694,6 +699,7 @@ def summarizer_provenance(config: Any) -> dict[str, str | None]:
         reasoning_effort = config.codex.reasoning_effort
     elif backend == "claude":
         model = config.claude.model
+        reasoning_effort = config.claude.effort
         execution = config.claude.launcher_execution
         launcher = config.claude.launcher_command
     elif backend == "local_command":

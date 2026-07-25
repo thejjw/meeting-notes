@@ -170,6 +170,7 @@ summarization:
   claude:
     executable: claude
     model: sonnet
+    effort: null
     environment: {}
     launcher_execution: direct
     launcher_command: null

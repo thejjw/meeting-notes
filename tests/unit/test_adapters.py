@@ -154,7 +154,7 @@ def test_provider_options_preserve_null_defaults() -> None:
     }
 
 
-def test_claude_configured_model_is_forwarded(tmp_path: Path) -> None:
+def test_claude_configured_model_and_effort_are_forwarded(tmp_path: Path) -> None:
     observed: dict[str, object] = {}
 
     def fake_run(args: list[str], **kwargs: object):
@@ -163,7 +163,12 @@ def test_claude_configured_model_is_forwarded(tmp_path: Path) -> None:
         observed["args"] = args
         return SubprocessResult(0, '{"title":"ok"}', "", args)
 
-    config = MeetingNotesConfig(summarization={"backend": "claude", "claude": {"model": "sonnet"}})
+    config = MeetingNotesConfig(
+        summarization={
+            "backend": "claude",
+            "claude": {"model": "sonnet", "effort": "medium"},
+        }
+    )
     adapter = get_adapter(
         config.summarization.backend,
         **configured_adapter_options(config.summarization),
@@ -175,6 +180,7 @@ def test_claude_configured_model_is_forwarded(tmp_path: Path) -> None:
     assert isinstance(args, list)
     assert args[:5] == ["claude", "-p", "--output-format", "json", "--no-session-persistence"]
     assert args[args.index("--model") + 1] == "sonnet"
+    assert args[args.index("--effort") + 1] == "medium"
     assert result.data == {"title": "ok"}
 
 
@@ -184,9 +190,24 @@ def test_claude_null_model_omits_model_flag() -> None:
     assert options == {
         "executable": "claude",
         "model": None,
+        "effort": None,
         "environment": {},
         "launcher_execution": "direct",
         "launcher_command": None,
+    }
+
+
+def test_claude_effort_is_recorded_in_provenance() -> None:
+    config = MeetingNotesConfig(
+        summarization={"backend": "claude", "claude": {"effort": "high"}}
+    )
+
+    assert summarizer_provenance(config.summarization) == {
+        "backend": "claude",
+        "requested_model": None,
+        "requested_reasoning_effort": "high",
+        "execution": "direct",
+        "launcher": None,
     }
 
 
