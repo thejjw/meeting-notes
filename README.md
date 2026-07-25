@@ -111,10 +111,39 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes process FILE --dry-run` | Show plan without running |
 | `meeting-notes process FILE --from summarize` | Resume from specific stage |
 | `meeting-notes process FILE --force-stage transcribe` | Re-run a specific stage |
+| `meeting-notes feedback FILE` | Ingest user responses from Markdown notes to update glossary & summary |
 | `meeting-notes doctor` | Check environment and tools |
 | `meeting-notes config show` | Show current configuration |
 | `meeting-notes models list` | List available Whisper models |
 | `meeting-notes resources show` | Show memory estimates |
+
+## User Feedback & Terminology Refinement
+
+Automatic Speech Recognition (ASR) may mishear technical terms or leave action item assignees unspecified. Generated meeting notes include a `## 사용자 확인 및 정정` section to let users review and correct these items.
+
+### Workflow
+
+1. **Review Notes**: Open `*_meeting-notes.md` in your text editor and check off or fill in answers:
+   ```markdown
+   ## 사용자 확인 및 정정
+
+   - [x] **[ASR 정정]** "아르고 시디"로 전사됨. "ArgoCD"가 맞나요? (추천 정정: `ArgoCD`)
+     - 근거: [seg-000012](../transcript/transcript.merged.md#seg-000012)
+     - 답변: ArgoCD
+   - [x] **[정보 확인]** "OAuth 전환 작업" 담당자가 미정입니다.
+     - 근거: [seg-000045](../transcript/transcript.merged.md#seg-000045)
+     - 답변: 김철수
+   ```
+
+2. **Incorporate Feedback**:
+   ```bash
+   uv run meeting-notes feedback 2026-07-25_topic_meeting-notes.md
+   ```
+
+### What Happens:
+- **Glossary Update**: Term corrections (e.g. `아르고 시디` -> `ArgoCD`) are saved to `config/glossary.yaml`. Future Whisper transcriptions and LLM prompts will automatically recognize these terms.
+- **Summary Update**: Confirmed assignees/dates update `summary.json` and the rendered Markdown notes.
+- **Optional LLM Re-summarization**: Use `--re-summarize` to re-run the LLM summarizer with human feedback overrides.
 
 ## Configuration
 
