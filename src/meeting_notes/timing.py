@@ -18,6 +18,19 @@ if TYPE_CHECKING:
 
     from meeting_notes.config import MeetingNotesConfig
 
+# Shipped fallback used only when a machine has no completed job at all for a
+# stage yet (not even a mismatched-config one), so a first-ever run still
+# shows a ballpark instead of nothing. Measured once, on one machine: CPU
+# whisper.cpp v1.9.1 (large-v3-turbo) and pyannote/speaker-diarization-
+# community-1 (auto device), on a 75-minute Korean recording. Expect
+# meaningfully different numbers on different hardware -- this is a seed,
+# not a promise; it's replaced by this machine's own measurements as soon as
+# one job completes.
+GENERIC_DEFAULT_REAL_TIME_FACTOR: dict[str, float] = {
+    "transcribe": 1.34,
+    "diarize": 0.51,
+}
+
 
 def _parse_iso(value: str | None) -> datetime | None:
     if not value:
@@ -206,14 +219,24 @@ def build_time_estimate_lines(
             continue
 
         rtf = most_recent_real_time_factor(data_dir, stage_name, exclude_job_dir=exclude_job_dir)
-        if rtf is None:
+        if rtf is not None:
+            estimate = rtf * audio_duration_seconds
+            total_seconds += estimate
+            lines.append(
+                f"{label}: ~{format_duration(estimate)} "
+                "(rough guess from the last run's speed, no history yet for this exact setup)"
+            )
+            continue
+
+        generic_rtf = GENERIC_DEFAULT_REAL_TIME_FACTOR.get(stage_name)
+        if generic_rtf is None:
             no_data.append(label)
             continue
-        estimate = rtf * audio_duration_seconds
+        estimate = generic_rtf * audio_duration_seconds
         total_seconds += estimate
         lines.append(
             f"{label}: ~{format_duration(estimate)} "
-            "(rough guess from the last run's speed, no history yet for this exact setup)"
+            "(generic estimate, not measured on this machine yet)"
         )
 
     if not lines and not no_data:

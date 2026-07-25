@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
+from meeting_notes import timing
 from meeting_notes.config import MeetingNotesConfig
 from meeting_notes.timing import (
     build_time_estimate_lines,
@@ -13,6 +14,11 @@ from meeting_notes.timing import (
     format_duration,
     most_recent_real_time_factor,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    import pytest
 
 MATCH = {"backend": "whisper_cpp", "device": "cpu", "model": "large-v3-turbo"}
 
@@ -167,13 +173,14 @@ class TestBuildTimeEstimateLines:
         assert any("Transcribe (ASR)" in line and "20m" in line for line in lines)
         assert any(line.strip().startswith("Total:") for line in lines)
 
-    def test_reports_no_history_message_when_no_samples(self, tmp_path: Path) -> None:
+    def test_generic_default_used_when_no_local_data_at_all(self, tmp_path: Path) -> None:
         config = MeetingNotesConfig(
             runtime={"asr_backend": "whisper_cpp", "device": "cpu"},
             asr={"model": "large-v3-turbo"},
         )
         lines = build_time_estimate_lines(config, ["transcribe"], 600.0, data_dir=tmp_path)
-        assert any("No timing history" in line for line in lines)
+        assert any("generic estimate" in line for line in lines)
+        assert not any("No timing history" in line for line in lines)
 
     def test_excludes_current_job_dir(self, tmp_path: Path) -> None:
         config = MeetingNotesConfig(
@@ -184,6 +191,17 @@ class TestBuildTimeEstimateLines:
         lines = build_time_estimate_lines(
             config, ["transcribe"], 600.0, data_dir=tmp_path, exclude_job_dir=job_dir
         )
+        assert any("generic estimate" in line for line in lines)
+
+    def test_reports_no_history_when_stage_has_no_generic_default(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delitem(timing.GENERIC_DEFAULT_REAL_TIME_FACTOR, "transcribe")
+        config = MeetingNotesConfig(
+            runtime={"asr_backend": "whisper_cpp", "device": "cpu"},
+            asr={"model": "large-v3-turbo"},
+        )
+        lines = build_time_estimate_lines(config, ["transcribe"], 600.0, data_dir=tmp_path)
         assert any("No timing history" in line for line in lines)
 
     def test_falls_back_to_rough_guess_when_no_exact_match(self, tmp_path: Path) -> None:
