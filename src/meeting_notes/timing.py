@@ -97,6 +97,50 @@ def estimate_stage_seconds(
     return median(factors) * audio_duration_seconds, len(factors)
 
 
+def most_recent_real_time_factor(
+    data_dir: Path,
+    stage_name: str,
+    *,
+    exclude_job_dir: Path | None = None,
+) -> float | None:
+    """Real-time factor of the most recently completed job for a stage, any config.
+
+    Used as a rough fallback estimate when no job has matched the current
+    backend/device/model yet, so a first-time configuration still gets a
+    loose guess instead of nothing.
+    """
+    meetings_dir = data_dir / "meetings"
+    if not meetings_dir.is_dir():
+        return None
+
+    latest: tuple[datetime, float] | None = None
+    for job_dir in meetings_dir.iterdir():
+        if not job_dir.is_dir() or job_dir == exclude_job_dir:
+            continue
+        manifest_path = job_dir / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+
+        stage = manifest.get("stages", {}).get(stage_name, {})
+        if stage.get("status") != "completed":
+            continue
+
+        ended_at = _parse_iso(stage.get("ended_at"))
+        audio_seconds = manifest.get("source", {}).get("duration_seconds")
+        wall_seconds = _stage_wall_seconds(stage)
+        if ended_at is None or not audio_seconds or audio_seconds <= 0 or wall_seconds is None:
+            continue
+
+        if latest is None or ended_at > latest[0]:
+            latest = (ended_at, wall_seconds / audio_seconds)
+
+    return latest[1] if latest else None
+
+
 def format_duration(seconds: float) -> str:
     """Render seconds as a compact duration, e.g. '1h 12m', '3m 5s', '45s'."""
     total = max(0, round(seconds))
@@ -144,7 +188,7 @@ def build_time_estimate_lines(
         return []
 
     lines: list[str] = []
-    unestimated: list[str] = []
+    no_data: list[str] = []
     total_seconds = 0.0
 
     for stage_name, (label, match) in stage_matches.items():
@@ -155,23 +199,33 @@ def build_time_estimate_lines(
             audio_duration_seconds,
             exclude_job_dir=exclude_job_dir,
         )
-        if estimate is None:
-            unestimated.append(label)
+        if estimate is not None:
+            run_word = "run" if count == 1 else "runs"
+            lines.append(f"{label}: ~{format_duration(estimate)} (from {count} prior {run_word})")
+            total_seconds += estimate
             continue
-        total_seconds += estimate
-        run_word = "run" if count == 1 else "runs"
-        lines.append(f"{label}: ~{format_duration(estimate)} (from {count} prior {run_word})")
 
-    if not lines and not unestimated:
+        rtf = most_recent_real_time_factor(data_dir, stage_name, exclude_job_dir=exclude_job_dir)
+        if rtf is None:
+            no_data.append(label)
+            continue
+        estimate = rtf * audio_duration_seconds
+        total_seconds += estimate
+        lines.append(
+            f"{label}: ~{format_duration(estimate)} "
+            "(rough guess from the last run's speed, no history yet for this exact setup)"
+        )
+
+    if not lines and not no_data:
         return []
 
     report = [f"Estimated time (audio length: {format_duration(audio_duration_seconds)}):"]
     report.extend(f"  {line}" for line in lines)
     if lines:
         report.append(f"  Total: ~{format_duration(total_seconds)}")
-    if unestimated:
+    if no_data:
         report.append(
-            f"  No timing history yet for: {', '.join(unestimated)}"
+            f"  No timing history yet for: {', '.join(no_data)}"
             " -- this run will establish a baseline for next time."
         )
     return report

@@ -11,6 +11,7 @@ from meeting_notes.timing import (
     collect_real_time_factors,
     estimate_stage_seconds,
     format_duration,
+    most_recent_real_time_factor,
 )
 
 MATCH = {"backend": "whisper_cpp", "device": "cpu", "model": "large-v3-turbo"}
@@ -102,6 +103,30 @@ class TestEstimateStageSeconds:
         assert estimate == 2000.0  # median RTF 2.0 * 1000s
 
 
+class TestMostRecentRealTimeFactor:
+    def test_no_completed_jobs_returns_none(self, tmp_path: Path) -> None:
+        assert most_recent_real_time_factor(tmp_path, "transcribe") is None
+
+    def test_ignores_config_and_uses_most_recent(self, tmp_path: Path) -> None:
+        other = {"backend": "openai_whisper", "device": "cpu", "model": "tiny"}
+        _write_job(
+            tmp_path, "job1", runtime=other, duration_seconds=600.0,
+            ended_at="2026-07-25T00:10:00+00:00",  # RTF 1.0
+        )
+        _write_job(
+            tmp_path, "job2", runtime=other, duration_seconds=600.0,
+            ended_at="2026-07-25T01:00:00+00:00",  # RTF 6.0, more recent
+        )
+        assert most_recent_real_time_factor(tmp_path, "transcribe") == 6.0
+
+    def test_excludes_current_job_dir(self, tmp_path: Path) -> None:
+        job_dir = _write_job(tmp_path, "job1")
+        assert (
+            most_recent_real_time_factor(tmp_path, "transcribe", exclude_job_dir=job_dir)
+            is None
+        )
+
+
 class TestFormatDuration:
     def test_seconds_only(self) -> None:
         assert format_duration(45) == "45s"
@@ -160,3 +185,18 @@ class TestBuildTimeEstimateLines:
             config, ["transcribe"], 600.0, data_dir=tmp_path, exclude_job_dir=job_dir
         )
         assert any("No timing history" in line for line in lines)
+
+    def test_falls_back_to_rough_guess_when_no_exact_match(self, tmp_path: Path) -> None:
+        config = MeetingNotesConfig(
+            runtime={"asr_backend": "whisper_cpp", "device": "cpu"},
+            asr={"model": "large-v3-turbo"},
+        )
+        # Different model -> no exact match, but still usable as a loose guess.
+        other = {"backend": "whisper_cpp", "device": "cpu", "model": "small"}
+        _write_job(tmp_path, "job1", runtime=other, duration_seconds=600.0)  # RTF 1.0
+
+        lines = build_time_estimate_lines(config, ["transcribe"], 1200.0, data_dir=tmp_path)
+
+        assert any("rough guess" in line and "20m" in line for line in lines)
+        assert any(line.strip().startswith("Total:") for line in lines)
+        assert not any("No timing history" in line for line in lines)
