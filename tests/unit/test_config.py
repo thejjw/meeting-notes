@@ -181,9 +181,7 @@ class TestTranscriptionWizard:
         selected = options[_default_model_index(options) - 1]
         assert selected["name"] == "small"
 
-    def test_safe_defaults_fall_back_to_small_below_turbo_headroom(
-        self, tmp_path: Path
-    ) -> None:
+    def test_safe_defaults_fall_back_to_small_below_turbo_headroom(self, tmp_path: Path) -> None:
         diagnostics = SystemDiagnostics()
         diagnostics.memory = MemoryDetection(
             total_ram_gb=4.0,
@@ -258,5 +256,5 @@ class TestSummarizationWizard:
         diagnostics = SystemDiagnostics()
         diagnostics.tools.codex_available = True
         diagnostics.tools.claude_available = True
-        with patch("typer.prompt", return_value=3):
+        with patch("typer.prompt", return_value=4):
             assert _prompt_summarization_config(diagnostics) == ("none", None, None)

@@ -238,6 +238,11 @@ def apply_clarifications(
     re-summarize with the confirmed answers as authoritative context, and
     publish the result as a new generation.
     """
+    if config.summarization.backend == "lemonade":
+        raise ClarificationError(
+            "Clarification regeneration is unavailable for best-effort local Markdown "
+            "summaries. Switch to Codex or another structured summarizer."
+        )
     answers_path = answers_path or job_dir / "clarifications.yaml"
     if not answers_path.is_file():
         raise ClarificationError(

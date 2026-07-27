@@ -367,6 +367,12 @@ class LemonadeASRBackend(ASRBackend):
                     headers=self._headers(),
                     timeout=self._timeout(self.transcription_timeout_seconds),
                 )
+                if response.status_code == 413:
+                    raise RuntimeError(
+                        "Lemonade rejected the audio upload as too large (HTTP 413). "
+                        "Run transcription through the meeting-notes pipeline so it can "
+                        "split and merge the normalized audio automatically."
+                    )
                 response.raise_for_status()
                 payload = response.json()
         except (OSError, httpx.HTTPError, ValueError) as error:

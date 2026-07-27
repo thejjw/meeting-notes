@@ -125,6 +125,8 @@ asr:
       connect_timeout_seconds: 5
       provisioning_timeout_seconds: 3600
       transcription_timeout_seconds: 7200
+      # Larger normalized WAVs are split and merged automatically.
+      max_upload_mib: 40
 
 diarization:
   enabled: true
@@ -188,6 +190,16 @@ summarization:
     command: []
     script: null
     environment: {}
+  lemonade:
+    base_url: http://127.0.0.1:13305
+    model_id: Gemma-4-26B-A4B-it-MTP-GGUF
+    prompt_path: ./prompts/meeting-summary-local.md
+    api_key_env: LEMONADE_API_KEY
+    connect_timeout_seconds: 5
+    request_timeout_seconds: 7200
+    provisioning_timeout_seconds: 3600
+    # null omits max_tokens and lets the model stop naturally at EOS.
+    max_completion_tokens: null
 
 naming:
   enabled: true

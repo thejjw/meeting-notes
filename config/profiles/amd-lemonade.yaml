@@ -17,3 +17,14 @@ asr:
       connect_timeout_seconds: 5
       provisioning_timeout_seconds: 3600
       transcription_timeout_seconds: 7200
+      max_upload_mib: 40
+
+# Optional local summarization. The setup wizard can select this independently
+# from ASR and will never start Lemonade Server itself.
+summarization:
+  lemonade:
+    base_url: http://127.0.0.1:13305
+    model_id: Gemma-4-26B-A4B-it-MTP-GGUF
+    prompt_path: ./prompts/meeting-summary-local.md
+    request_timeout_seconds: 7200
+    max_completion_tokens: null

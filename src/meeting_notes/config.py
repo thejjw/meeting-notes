@@ -89,6 +89,7 @@ class LemonadeBackendOptions(BaseModel):
     connect_timeout_seconds: float = 5.0
     provisioning_timeout_seconds: float = 3600.0
     transcription_timeout_seconds: float = 7200.0
+    max_upload_mib: float = Field(default=40.0, gt=1.0)
 
 
 class ASRBackendOptions(BaseModel):
@@ -294,6 +295,19 @@ class LocalCommandConfig(BaseModel):
         return self
 
 
+class LemonadeSummarizerConfig(BaseModel):
+    """AMD Lemonade Server summarization options."""
+
+    base_url: str = "http://127.0.0.1:13305"
+    model_id: str = "Gemma-4-26B-A4B-it-MTP-GGUF"
+    prompt_path: str = "./prompts/meeting-summary-local.md"
+    api_key_env: str = "LEMONADE_API_KEY"
+    connect_timeout_seconds: float = 5.0
+    request_timeout_seconds: int = 7200
+    provisioning_timeout_seconds: int = 3600
+    max_completion_tokens: int | None = Field(default=None, ge=1)
+
+
 class SummarizationConfig(BaseModel):
     """Summarization settings."""
 
@@ -313,6 +327,7 @@ class SummarizationConfig(BaseModel):
     codex: CodexConfig = Field(default_factory=CodexConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     local_command: LocalCommandConfig = Field(default_factory=LocalCommandConfig)
+    lemonade: LemonadeSummarizerConfig = Field(default_factory=LemonadeSummarizerConfig)
 
 
 class NamingConfig(BaseModel):

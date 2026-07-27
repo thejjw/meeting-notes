@@ -125,6 +125,9 @@ def _sensitive_values(config: MeetingNotesConfig) -> list[str]:
             resolved = os.environ.get(match.group(1), "") if match else value
             if resolved:
                 values.append(resolved)
+    lemonade_token = os.environ.get(config.summarization.lemonade.api_key_env, "")
+    if lemonade_token:
+        values.append(lemonade_token)
     return values
 
 
@@ -179,8 +182,22 @@ def write_run_report(
         ),
         f"- Launcher: `{provenance.get('launcher') or provenance.get('execution') or 'direct'}`",
     ]
-    prompt_hash = _path_fingerprint(config.summarization.prompt_path)
-    schema_hash = _path_fingerprint(config.summarization.output_schema_path)
+    provider_stage = manifest.get("stages", {}).get("summarize", {}).get("provider", {})
+    if provider_stage.get("output_format"):
+        lines.append(f"- Summary format: `{provider_stage['output_format']}`")
+    if provider_stage.get("quality_tier"):
+        lines.append(f"- Summary quality tier: `{provider_stage['quality_tier']}`")
+    prompt_path = (
+        config.summarization.lemonade.prompt_path
+        if config.summarization.backend == "lemonade"
+        else config.summarization.prompt_path
+    )
+    prompt_hash = _path_fingerprint(prompt_path)
+    schema_hash = (
+        None
+        if config.summarization.backend == "lemonade"
+        else _path_fingerprint(config.summarization.output_schema_path)
+    )
     for label, value in (
         ("Transcript SHA-256", transcript_sha256),
         ("Speaker mapping SHA-256", mapping_sha256),

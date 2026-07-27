@@ -11,12 +11,14 @@ import os
 import re
 import shlex
 import tempfile
+import time
 from abc import ABC, abstractmethod
 from base64 import b64encode
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import httpx
 import structlog
 
 from meeting_notes.subprocess_utils import run_command
@@ -25,16 +27,36 @@ log = structlog.get_logger()
 _ENV_REFERENCE = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$")
 _SHELL_COMMAND = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*$")
 _CLAUDE_STDIN_PROMPT = "Follow the task instructions and transcript provided via stdin."
+_LOCAL_REASONING_MARKERS = ("<|thought|>", "<|final|>", "</think>")
+
+
+def _strip_local_reasoning(output: str) -> str:
+    """Remove known local-model reasoning envelopes without rewriting Markdown."""
+    cleaned = output.strip()
+    marker_positions = [
+        (cleaned.rfind(marker), marker) for marker in _LOCAL_REASONING_MARKERS if marker in cleaned
+    ]
+    if marker_positions:
+        position, marker = max(marker_positions)
+        cleaned = cleaned[position + len(marker) :].strip()
+    elif cleaned.lower().startswith(("--- thought", "<think>", "thought:")):
+        heading = re.search(r"(?m)^#\s+\S.+$", cleaned)
+        if heading:
+            cleaned = cleaned[heading.start() :].strip()
+    return cleaned
 
 
 @dataclass
 class SummaryResult:
     """Result from a summarization backend."""
 
-    data: dict[str, Any]
+    data: dict[str, Any] | None = None
     backend: str = ""
     raw_output: str = ""
     warnings: list[str] = field(default_factory=list)
+    output_format: str = "structured_json"
+    markdown: str | None = None
+    metrics: dict[str, Any] = field(default_factory=dict)
 
 
 class SummarizerAdapter(ABC):
@@ -631,6 +653,218 @@ class LocalCommandAdapter(SummarizerAdapter):
         )
 
 
+class LemonadeAdapter(SummarizerAdapter):
+    """Best-effort Markdown summarizer using a running AMD Lemonade Server."""
+
+    def __init__(
+        self,
+        base_url: str = "http://127.0.0.1:13305",
+        model_id: str = "Gemma-4-26B-A4B-it-MTP-GGUF",
+        api_key_env: str = "LEMONADE_API_KEY",
+        connect_timeout_seconds: float = 5.0,
+        request_timeout_seconds: int = 7200,
+        provisioning_timeout_seconds: int = 3600,
+        max_completion_tokens: int | None = None,
+    ) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.model_id = model_id
+        self.api_key_env = api_key_env
+        self.connect_timeout_seconds = connect_timeout_seconds
+        self.request_timeout_seconds = request_timeout_seconds
+        self.provisioning_timeout_seconds = provisioning_timeout_seconds
+        self.max_completion_tokens = max_completion_tokens
+
+    @property
+    def name(self) -> str:
+        return "lemonade"
+
+    def _headers(self) -> dict[str, str]:
+        token = os.environ.get(self.api_key_env, "") if self.api_key_env else ""
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
+    def _timeout(self, total_seconds: float) -> httpx.Timeout:
+        return httpx.Timeout(total_seconds, connect=self.connect_timeout_seconds)
+
+    def _get_json(self, path: str) -> dict[str, Any]:
+        try:
+            response = httpx.get(
+                f"{self.base_url}{path}",
+                headers=self._headers(),
+                timeout=self._timeout(self.connect_timeout_seconds),
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeError(f"Lemonade request failed: {error}") from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("Lemonade returned a non-object response.")
+        return payload
+
+    def is_available(self) -> bool:
+        try:
+            return self._get_json("/v1/health").get("status") == "ok"
+        except RuntimeError:
+            return False
+
+    def model_info(self) -> dict[str, Any] | None:
+        payload = self._get_json("/v1/models?show_all=true")
+        models = payload.get("data")
+        if not isinstance(models, list):
+            return None
+        return next(
+            (item for item in models if isinstance(item, dict) and item.get("id") == self.model_id),
+            None,
+        )
+
+    def pull_model(self) -> None:
+        """Download the configured catalogue model through the running server."""
+        info = self.model_info()
+        if info is None:
+            raise RuntimeError(f"Lemonade model '{self.model_id}' is not registered.")
+        if info.get("downloaded"):
+            return
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self.base_url}/v1/pull",
+                json={"model_name": self.model_id, "stream": True},
+                headers=self._headers(),
+                timeout=self._timeout(self.provisioning_timeout_seconds),
+            ) as response:
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    payload = json.loads(line.partition(":")[2].strip())
+                    if isinstance(payload, dict) and payload.get("error"):
+                        raise RuntimeError(str(payload["error"]))
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeError(
+                f"Failed to download Lemonade model '{self.model_id}': {error}"
+            ) from error
+        refreshed = self.model_info()
+        if not refreshed or not refreshed.get("downloaded"):
+            raise RuntimeError(f"Lemonade did not report '{self.model_id}' as downloaded.")
+
+    def ensure_model_ready(self) -> dict[str, Any]:
+        info = self.model_info()
+        if info is None:
+            raise RuntimeError(f"Lemonade model '{self.model_id}' is not registered.")
+        if not info.get("downloaded"):
+            raise RuntimeError(
+                f"Lemonade model '{self.model_id}' is not downloaded. "
+                "Run `meeting-notes configure --provision --yes` after selecting "
+                "Lemonade summarization."
+            )
+        health = self._get_json("/v1/health")
+        loaded = health.get("all_models_loaded")
+        if isinstance(loaded, list) and any(
+            isinstance(item, dict)
+            and item.get("model_name") == self.model_id
+            and item.get("status") in {"ready", "in_use"}
+            for item in loaded
+        ):
+            return info
+        try:
+            response = httpx.post(
+                f"{self.base_url}/v1/load",
+                json={"model_name": self.model_id, "save_options": False},
+                headers=self._headers(),
+                timeout=self._timeout(self.provisioning_timeout_seconds),
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            raise RuntimeError(
+                f"Failed to load Lemonade model '{self.model_id}': {error}"
+            ) from error
+        return info
+
+    def summarize(
+        self,
+        transcript_text: str,
+        *,
+        prompt: str,
+        schema_path: Path | None = None,
+        timeout_seconds: int = 1800,
+        metadata: dict[str, Any] | None = None,
+    ) -> SummaryResult:
+        del schema_path, metadata
+        info = self.ensure_model_ready()
+        request: dict[str, Any] = {
+            "model": self.model_id,
+            "messages": [
+                {"role": "system", "content": prompt},
+                {"role": "user", "content": f"Transcript:\n{transcript_text}"},
+            ],
+            "stream": True,
+        }
+        if self.max_completion_tokens is not None:
+            request["max_tokens"] = self.max_completion_tokens
+
+        content_parts: list[str] = []
+        reasoning_characters = 0
+        usage: dict[str, Any] = {}
+        started = time.monotonic()
+        effective_timeout = self.request_timeout_seconds or timeout_seconds
+        try:
+            with httpx.stream(
+                "POST",
+                f"{self.base_url}/v1/chat/completions",
+                json=request,
+                headers=self._headers(),
+                timeout=self._timeout(effective_timeout),
+            ) as response:
+                if response.status_code in {400, 413}:
+                    detail = response.read().decode("utf-8", errors="replace")[:1000]
+                    raise RuntimeError(
+                        "Lemonade rejected the complete transcript request. It may exceed "
+                        f"the model's {info.get('max_context_window') or 'reported'}-token "
+                        f"context window or the server payload limit: {detail}"
+                    )
+                response.raise_for_status()
+                for line in response.iter_lines():
+                    if not line.startswith("data:"):
+                        continue
+                    raw = line.partition(":")[2].strip()
+                    if not raw or raw == "[DONE]":
+                        continue
+                    event = json.loads(raw)
+                    if not isinstance(event, dict):
+                        continue
+                    if isinstance(event.get("usage"), dict):
+                        usage.update(event["usage"])
+                    choices = event.get("choices")
+                    if not isinstance(choices, list) or not choices:
+                        continue
+                    delta = choices[0].get("delta")
+                    if not isinstance(delta, dict):
+                        continue
+                    content = delta.get("content")
+                    if isinstance(content, str):
+                        content_parts.append(content)
+                    reasoning = delta.get("reasoning_content")
+                    if isinstance(reasoning, str):
+                        reasoning_characters += len(reasoning)
+        except (httpx.HTTPError, ValueError) as error:
+            raise RuntimeError(f"Lemonade summarization failed: {error}") from error
+
+        markdown = _strip_local_reasoning("".join(content_parts))
+        if not markdown:
+            raise RuntimeError("Lemonade returned an empty Markdown summary.")
+        return SummaryResult(
+            backend=self.name,
+            raw_output=markdown[:5000],
+            output_format="markdown",
+            markdown=markdown,
+            metrics={
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+                "reasoning_characters": reasoning_characters,
+                "max_context_window": info.get("max_context_window"),
+                **usage,
+            },
+        )
+
+
 # --- Registry ---
 
 _adapters: dict[str, type[SummarizerAdapter]] = {
@@ -639,6 +873,7 @@ _adapters: dict[str, type[SummarizerAdapter]] = {
     "mimo": MimoCodeAdapter,
     "claude": ClaudeCodeAdapter,
     "local_command": LocalCommandAdapter,
+    "lemonade": LemonadeAdapter,
 }
 
 _adapter_aliases = {
@@ -700,10 +935,21 @@ def configured_adapter_options(config: Any) -> dict[str, Any]:
             "script": options.script,
             "environment": options.environment,
         }
+    if backend == "lemonade":
+        options = config.lemonade
+        return {
+            "base_url": options.base_url,
+            "model_id": options.model_id,
+            "api_key_env": options.api_key_env,
+            "connect_timeout_seconds": options.connect_timeout_seconds,
+            "request_timeout_seconds": options.request_timeout_seconds,
+            "provisioning_timeout_seconds": options.provisioning_timeout_seconds,
+            "max_completion_tokens": options.max_completion_tokens,
+        }
     return {}
 
 
-def summarizer_provenance(config: Any) -> dict[str, str | None]:
+def summarizer_provenance(config: Any) -> dict[str, Any]:
     """Return the requested provider settings without claiming effective defaults."""
     backend = str(config.backend)
     model: str | None = None
@@ -720,6 +966,10 @@ def summarizer_provenance(config: Any) -> dict[str, str | None]:
         launcher = config.claude.launcher_command
     elif backend == "local_command":
         execution = config.local_command.execution
+    elif backend == "lemonade":
+        model = config.lemonade.model_id
+        execution = "http"
+        launcher = config.lemonade.base_url
     return {
         "backend": backend,
         "requested_model": model,

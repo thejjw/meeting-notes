@@ -3,11 +3,15 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import structlog
+
+from meeting_notes.subprocess_utils import run_command
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -116,3 +120,43 @@ def load_chunks_manifest(path: Path) -> list[AudioChunk]:
         )
         for c in data
     ]
+
+
+def materialize_audio_chunks(
+    input_path: Path,
+    chunks: list[AudioChunk],
+    output_dir: Path,
+    *,
+    ffmpeg_path: str = "ffmpeg",
+) -> list[AudioChunk]:
+    """Extract timestamped PCM WAV chunks with FFmpeg."""
+    if not input_path.is_file():
+        raise FileNotFoundError(f"Normalized audio not found: {input_path}")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    for chunk in chunks:
+        output_path = output_dir / f"{chunk.chunk_id}.wav"
+        args = [
+            ffmpeg_path,
+            "-y",
+            "-v",
+            "error",
+            "-ss",
+            f"{chunk.source_start:.3f}",
+            "-t",
+            f"{chunk.duration:.3f}",
+            "-i",
+            str(input_path),
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            str(output_path),
+        ]
+        result = run_command(args, timeout=300.0, label=f"ffmpeg-{chunk.chunk_id}")
+        if not result.success:
+            raise RuntimeError(
+                f"FFmpeg chunk extraction failed for {chunk.chunk_id}: "
+                f"{result.stderr[:500]}"
+            )
+        chunk.path = str(output_path)
+    return chunks

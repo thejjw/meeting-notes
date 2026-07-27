@@ -9,12 +9,19 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from meeting_notes.asr.base import ASRReadiness
+from meeting_notes.asr.base import ASRReadiness, ASRResult, ASRSegment
 from meeting_notes.asr.lemonade import LemonadeASRBackend
 from meeting_notes.asr.registry import get_configured_backend, list_backends
+from meeting_notes.audio.chunk import AudioChunk
 from meeting_notes.config import MeetingNotesConfig
-from meeting_notes.configure import _build_backend_options, _provision_lemonade_model
+from meeting_notes.configure import (
+    _build_backend_options,
+    _provision_lemonade_model,
+    _provision_lemonade_summarizer,
+)
+from meeting_notes.pipeline import _merge_asr_chunks, _transcription_chunks
 from meeting_notes.resources import SystemDiagnostics
+from meeting_notes.summarization.adapters import LemonadeAdapter
 from meeting_notes.timing import build_time_estimate_lines
 
 if TYPE_CHECKING:
@@ -160,6 +167,100 @@ def test_lemonade_rejects_unsupported_initial_prompt(tmp_path: Path) -> None:
         LemonadeASRBackend().transcribe(wav, initial_prompt="terms")
 
 
+def test_lemonade_413_has_chunking_remediation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    wav = tmp_path / "sample.wav"
+    wav.write_bytes(b"RIFF")
+    backend = LemonadeASRBackend()
+    monkeypatch.setattr(
+        backend,
+        "load_model",
+        lambda: ASRReadiness(True, "ready", device="npu"),
+    )
+    monkeypatch.setattr(
+        httpx,
+        "post",
+        lambda *args, **kwargs: httpx.Response(
+            413,
+            request=httpx.Request("POST", "http://127.0.0.1:13305/test"),
+        ),
+    )
+    with pytest.raises(RuntimeError, match="split and merge"):
+        backend.transcribe(wav)
+
+
+def test_large_lemonade_wav_is_chunked_even_when_chunking_is_disabled(
+    tmp_path: Path,
+) -> None:
+    normalized = tmp_path / "normalized.wav"
+    normalized.write_bytes(b"\0" * (2 * 1024 * 1024))
+    config = _config()
+    config.audio.chunking.mode = "none"
+    config.audio.chunking.max_chunk_minutes = 20
+    config.asr.backend_options.lemonade.max_upload_mib = 1.5
+
+    chunks = _transcription_chunks(
+        normalized,
+        {"source": {"duration_seconds": 1000.0}},
+        config,
+    )
+
+    assert len(chunks) > 1
+    assert chunks[0].source_start == 0
+    assert chunks[-1].source_end == 1000
+
+
+def test_chunk_results_merge_to_absolute_timestamps_and_remove_overlap() -> None:
+    chunks = [
+        AudioChunk(
+            "chunk-0000",
+            source_start=0,
+            source_end=12,
+            overlap_after=2,
+        ),
+        AudioChunk(
+            "chunk-0001",
+            source_start=8,
+            source_end=20,
+            overlap_before=2,
+        ),
+    ]
+    first = ASRResult(
+        segments=[
+            ASRSegment("local-0", 8, 9, "before boundary"),
+            ASRSegment("local-1", 10, 11, "discarded overlap"),
+        ],
+        language="ko",
+        backend="lemonade",
+        model="large-v3-turbo",
+        device="npu",
+    )
+    second = ASRResult(
+        segments=[
+            ASRSegment("local-0", 0, 1, "duplicate overlap"),
+            ASRSegment("local-1", 3, 4, "after boundary"),
+            ASRSegment("local-2", 11.5, 12.5, "clamped ending"),
+        ],
+        language="ko",
+        backend="lemonade",
+        model="large-v3-turbo",
+        device="npu",
+    )
+
+    merged = _merge_asr_chunks(list(zip(chunks, [first, second], strict=True)))
+
+    assert [(item.id, item.start, item.text) for item in merged.segments] == [
+        ("seg-000000", 8, "before boundary"),
+        ("seg-000001", 11, "after boundary"),
+        ("seg-000002", 19.5, "clamped ending"),
+    ]
+    assert merged.segments[-1].end == 20
+    assert merged.duration == 20
+    assert merged.raw_output["chunk_count"] == 2
+
+
 def test_provision_requires_running_server() -> None:
     config = _config()
     with (
@@ -185,6 +286,36 @@ def test_provision_pulls_and_loads_registered_model() -> None:
         assert _provision_lemonade_model(config, yes=True) == "Whisper-Large-v3-Turbo"
     pull.assert_called_once()
     load.assert_called_once()
+
+
+def test_summarizer_provision_requires_running_server() -> None:
+    config = MeetingNotesConfig(summarization={"enabled": True, "backend": "lemonade"})
+    with (
+        patch.object(LemonadeAdapter, "is_available", return_value=False),
+        pytest.raises(RuntimeError, match="Start Lemonade Server manually"),
+    ):
+        _provision_lemonade_summarizer(config, yes=True)
+
+
+def test_summarizer_provision_pulls_and_loads_model() -> None:
+    config = MeetingNotesConfig(summarization={"enabled": True, "backend": "lemonade"})
+    with (
+        patch.object(LemonadeAdapter, "is_available", return_value=True),
+        patch.object(
+            LemonadeAdapter,
+            "model_info",
+            return_value={
+                "id": "Gemma-4-26B-A4B-it-MTP-GGUF",
+                "downloaded": False,
+                "size": 17.3,
+            },
+        ),
+        patch.object(LemonadeAdapter, "pull_model") as pull,
+        patch.object(LemonadeAdapter, "ensure_model_ready") as ready,
+    ):
+        assert _provision_lemonade_summarizer(config, yes=True) == "Gemma-4-26B-A4B-it-MTP-GGUF"
+    pull.assert_called_once()
+    ready.assert_called_once()
 
 
 def test_wizard_backend_options_include_default_lemonade_url() -> None:

@@ -347,9 +347,7 @@ def _speaker_apply_report_stages(
 ) -> dict[str, dict[str, str]]:
     """Describe the complete pipeline while distinguishing reused work."""
     diarization_message = (
-        "existing labels removed"
-        if without_diarization
-        else "reused existing speaker labels"
+        "existing labels removed" if without_diarization else "reused existing speaker labels"
     )
     return {
         "prepare": {"status": "skipped", "message": "reused existing job"},
@@ -374,6 +372,12 @@ def apply_speakers(
     without_diarization: bool = False,
 ) -> dict[str, Any]:
     from meeting_notes.summarization.adapters import summarizer_provenance
+
+    if config.summarization.backend == "lemonade":
+        raise SpeakerMapError(
+            "Speaker-driven republishing is unavailable for best-effort local Markdown "
+            "summaries. Switch to Codex or another structured summarizer."
+        )
 
     if without_diarization:
         transcript_path, anonymous = _transcript(job_dir)
@@ -615,11 +619,7 @@ def apply_speakers(
             mapping_sha256=map_hash,
             speaker_resolution=speaker_resolution,
             outputs=relative_outputs,
-            error=(
-                "Cleanup residual paths: " + ", ".join(residual)
-                if residual
-                else None
-            ),
+            error=("Cleanup residual paths: " + ", ".join(residual) if residual else None),
             messages=[
                 f"Published {len(relative_outputs)} output files.",
                 f"Cleanup of {cleanup_mode} completed."

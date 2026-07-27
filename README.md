@@ -311,6 +311,13 @@ uv run meeting-notes models download large-v3-turbo --backend lemonade --yes
 The Lemonade adapter uses timestamped `verbose_json` responses, so subtitles,
 speaker alignment, and evidence timestamps continue to work.
 
+Long normalized WAV files are split before upload when they exceed the
+conservative `asr.backend_options.lemonade.max_upload_mib` threshold (40 MiB by
+default). Responses are shifted back to absolute recording time, overlap is
+removed at chunk boundaries, and the pipeline writes one continuous transcript.
+Lemonade does not currently document a configurable multipart request-size
+limit, so increasing this value can reintroduce HTTP 413 errors.
+
 ## Summarization Backends
 
 | Backend | Config | Notes |
@@ -320,8 +327,43 @@ speaker alignment, and evidence timestamps continue to work.
 | `mimo` | `backend: mimo` | Mimo Code CLI |
 | `claude` | `backend: claude` | Claude Code CLI |
 | `local_command` | `backend: local_command` | Any custom CLI |
+| `lemonade` | `backend: lemonade` | Opt-in local best-effort Markdown |
 
 Set `summarization.enabled: false` to skip summarization (transcript-only mode).
+
+### AMD Lemonade local summarization
+
+The setup wizard offers Lemonade summarization independently from the ASR
+backend. It defaults to `http://127.0.0.1:13305` and
+`Gemma-4-26B-A4B-it-MTP-GGUF`. Start Lemonade Server manually; when it is
+reachable, provisioning may download and load the selected model after the
+normal large-download confirmation.
+
+```yaml
+summarization:
+  enabled: true
+  backend: lemonade
+  lemonade:
+    base_url: http://127.0.0.1:13305
+    model_id: Gemma-4-26B-A4B-it-MTP-GGUF
+    prompt_path: ./prompts/meeting-summary-local.md
+    request_timeout_seconds: 7200
+    max_completion_tokens: null
+```
+
+Lemonade uses its own concise prompt and returns relaxed Markdown rather than
+the production JSON schema. It does not request segment quotations or evidence
+IDs. Every local summary is marked **Local AI — best-effort summary** because
+local generation may be slower and less correct than Codex or another
+production-grade summarizer. Clarification regeneration and speaker-driven
+summary republishing require structured JSON and are unavailable for this
+output format.
+
+With `max_completion_tokens: null`, meeting-notes omits `max_tokens` and lets
+the model stop naturally. The model's total context window still includes the
+prompt, transcript, reasoning, and visible answer. Set a positive integer only
+when an explicit operational cap is wanted; the request timeout remains the
+runaway-generation safeguard.
 
 ### Codex and Claude model selection
 
@@ -452,7 +494,7 @@ command is run. With the example defaults, the workspace contains:
 | `./data/meetings/<job>/asr/` | Raw ASR JSON, Markdown, and subtitles |
 | `./data/meetings/<job>/diarization/` | Speaker turns and diarization artifacts |
 | `./data/meetings/<job>/transcript/` | Anonymous and currently named transcripts |
-| `./data/meetings/<job>/summary/` | Current structured summary |
+| `./data/meetings/<job>/summary/` | Current structured JSON or local Markdown summary |
 | `./data/meetings/<job>/output/` | Current minutes, publication generations, and compact run reports |
 | `./data/meetings/<job>/logs/` | Retained tool or build logs when produced |
 | `./cache/` and `./cache/models/` | Project-configured caches and model files |

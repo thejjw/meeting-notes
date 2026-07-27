@@ -8,10 +8,15 @@ from unittest.mock import patch
 import pytest
 
 from meeting_notes.config import MeetingNotesConfig
-from meeting_notes.pipeline import _format_summary_transcript
+from meeting_notes.pipeline import (
+    _format_local_summary_transcript,
+    _format_summary_transcript,
+    _run_summarize,
+)
 from meeting_notes.summarization.adapters import (
     ClaudeCodeAdapter,
     CodexAdapter,
+    LemonadeAdapter,
     LocalCommandAdapter,
     MimoCodeAdapter,
     OpenCodeAdapter,
@@ -207,9 +212,7 @@ def test_claude_null_model_omits_model_flag() -> None:
 
 
 def test_claude_effort_is_recorded_in_provenance() -> None:
-    config = MeetingNotesConfig(
-        summarization={"backend": "claude", "claude": {"effort": "high"}}
-    )
+    config = MeetingNotesConfig(summarization={"backend": "claude", "claude": {"effort": "high"}})
 
     assert summarizer_provenance(config.summarization) == {
         "backend": "claude",
@@ -233,6 +236,121 @@ def test_summary_transcript_includes_stable_evidence_ids() -> None:
     )
 
     assert formatted == "[seg-000123] [00:01:05] [SPEAKER_01] Decision text"
+
+
+def test_local_summary_transcript_omits_evidence_ids() -> None:
+    formatted = _format_local_summary_transcript(
+        [
+            {
+                "id": "seg-000123",
+                "start": 65.0,
+                "speaker": "SPEAKER_01",
+                "text": "Decision text",
+            }
+        ]
+    )
+
+    assert formatted == "[00:01:05] SPEAKER_01: Decision text"
+    assert "seg-000123" not in formatted
+
+
+class _StreamingResponse:
+    def __init__(self, lines: list[str]) -> None:
+        self._lines = lines
+        self.status_code = 200
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def iter_lines(self):
+        return iter(self._lines)
+
+
+@pytest.mark.parametrize(
+    ("configured_limit", "expected_limit"),
+    [(None, None), (32768, 32768)],
+)
+def test_lemonade_streams_markdown_and_only_sends_explicit_token_limit(
+    configured_limit: int | None,
+    expected_limit: int | None,
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_stream(method: str, url: str, **kwargs: object):
+        observed["method"] = method
+        observed["url"] = url
+        observed["json"] = kwargs["json"]
+        return _StreamingResponse(
+            [
+                'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}',
+                (
+                    'data: {"choices":[{"delta":{"content":'
+                    '"--- thought\\nprivate draft<|thought|># Title\\n\\nSummary"}}]}'
+                ),
+                "data: [DONE]",
+            ]
+        )
+
+    adapter = LemonadeAdapter(max_completion_tokens=configured_limit)
+    with (
+        patch.object(
+            adapter,
+            "ensure_model_ready",
+            return_value={"max_context_window": 262144},
+        ),
+        patch("meeting_notes.summarization.adapters.httpx.stream", side_effect=fake_stream),
+    ):
+        result = adapter.summarize("transcript", prompt="prompt")
+
+    request = observed["json"]
+    assert isinstance(request, dict)
+    assert request.get("max_tokens") == expected_limit
+    assert ("max_tokens" in request) is (expected_limit is not None)
+    assert result.output_format == "markdown"
+    assert result.markdown == "# Title\n\nSummary"
+    assert "private draft" not in result.markdown
+    assert result.data is None
+    assert result.metrics["reasoning_characters"] == 5
+    assert result.metrics["max_context_window"] == 262144
+
+
+def test_local_summary_stage_marks_output_and_removes_stale_json(tmp_path: Path) -> None:
+    (tmp_path / "transcript").mkdir()
+    (tmp_path / "summary").mkdir()
+    (tmp_path / "output").mkdir()
+    (tmp_path / "transcript" / "transcript.merged.json").write_text(
+        '{"segments":[{"start":0,"text":"hello"}]}',
+        encoding="utf-8",
+    )
+    (tmp_path / "summary" / "summary.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "output" / "summary.json").write_text("{}", encoding="utf-8")
+    result = SummaryResult(
+        backend="lemonade",
+        output_format="markdown",
+        markdown="# Local result\n\nUseful summary.",
+        metrics={"elapsed_seconds": 1.25},
+    )
+    config = MeetingNotesConfig(summarization={"enabled": True, "backend": "lemonade"})
+    manifest: dict[str, object] = {"stages": {}}
+
+    with patch("meeting_notes.pipeline._generate_summary_result", return_value=result):
+        updated = _run_summarize(tmp_path, manifest, config)
+
+    summary = (tmp_path / "summary" / "summary.md").read_text(encoding="utf-8")
+    assert "Local AI — best-effort summary" in summary
+    assert "Gemma-4-26B-A4B-it-MTP-GGUF" in summary
+    assert "# Local result" in summary
+    assert not (tmp_path / "summary" / "summary.json").exists()
+    assert not (tmp_path / "output" / "summary.json").exists()
+    provider = updated["stages"]["summarize"]["provider"]
+    assert provider["output_format"] == "markdown"
+    assert provider["quality_tier"] == "best_effort_local"
 
 
 class TestLocalCommandAdapter:
@@ -316,8 +434,7 @@ class TestLocalCommandAdapter:
     def test_schema_validation_reports_json_path(self, tmp_path: Path) -> None:
         schema = tmp_path / "schema.json"
         schema.write_text(
-            '{"type":"object","required":["title"],'
-            '"properties":{"title":{"type":"string"}}}',
+            '{"type":"object","required":["title"],"properties":{"title":{"type":"string"}}}',
             encoding="utf-8",
         )
 

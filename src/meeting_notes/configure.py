@@ -115,9 +115,15 @@ def _prompt_summarization_config(
         available.append(("codex", "Codex CLI"))
     if diag.tools.claude_available:
         available.append(("claude", "Claude Code"))
-    if not available:
-        console.print("[dim]Codex and Claude CLIs not detected. Summarization disabled.[/dim]")
-        return "none", None, None
+    from meeting_notes.summarization.adapters import LemonadeAdapter
+
+    lemonade_url = "http://127.0.0.1:13305"
+    lemonade_ready = LemonadeAdapter(
+        base_url=lemonade_url,
+        connect_timeout_seconds=0.75,
+    ).is_available()
+    lemonade_state = "detected" if lemonade_ready else "start server manually"
+    available.append(("lemonade", f"AMD Lemonade local Markdown ({lemonade_state})"))
 
     console.print(
         "[yellow]Summarization sends transcript text to the selected AI provider.[/yellow]"
@@ -134,7 +140,15 @@ def _prompt_summarization_config(
         raise typer.Exit(1)
 
     backend = available[choice - 1][0]
-    if backend == "codex":
+    if backend == "lemonade":
+        choices = [
+            (
+                "Gemma-4-26B-A4B-it-MTP-GGUF",
+                "Gemma 4 26B A4B MTP (recommended local model)",
+            ),
+            ("custom", "Custom Lemonade model ID"),
+        ]
+    elif backend == "codex":
         choices = [
             ("gpt-5.6-terra", "GPT-5.6 Terra (recommended: balanced cost and quality)"),
             ("gpt-5.6-sol", "GPT-5.6 Sol (flagship quality)"),
@@ -222,10 +236,14 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     lemonade_url: str | None = None
     if selected_backend["runtime_asr_backend"] == "lemonade":
         default_url = "http://127.0.0.1:13305"
-        lemonade_url = typer.prompt(
-            "Lemonade Server URL",
-            default=default_url,
-        ).strip().rstrip("/")
+        lemonade_url = (
+            typer.prompt(
+                "Lemonade Server URL",
+                default=default_url,
+            )
+            .strip()
+            .rstrip("/")
+        )
         from meeting_notes.asr.lemonade import LemonadeASRBackend
 
         lemonade = LemonadeASRBackend(
@@ -260,9 +278,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     for i, opt in enumerate(model_options, 1):
         fit = opt["fit"]
         fit_color = "green" if fit == "available" else ("yellow" if "warning" in fit else "red")
-        console.print(
-            f"  [{i}] {opt['name']} {'(default)' if i == default_model_idx else ''}"
-        )
+        console.print(f"  [{i}] {opt['name']} {'(default)' if i == default_model_idx else ''}")
         console.print(f"      Accuracy: {opt['accuracy']}")
         console.print(f"      Download: {opt['download']}")
         console.print(f"      Runtime memory: {opt['runtime_memory']}")
@@ -281,8 +297,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     console.print("  ko: Korean-dominant dialogue, including ordinary English terms")
     console.print("  en: English-dominant dialogue")
     console.print(
-        "  auto: detect one dominant language per ASR chunk; "
-        "not sentence-level language switching"
+        "  auto: detect one dominant language per ASR chunk; not sentence-level language switching"
     )
     lang = typer.prompt("Default language", default="ko (Korean)")
     lang_code = lang.split()[0] if lang else "ko"
@@ -345,6 +360,14 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
                 "model": summarization_model if summarization_backend == "claude" else None,
                 "effort": reasoning_effort if summarization_backend == "claude" else None,
             },
+            "lemonade": {
+                "base_url": lemonade_url or "http://127.0.0.1:13305",
+                "model_id": (
+                    summarization_model
+                    if summarization_backend == "lemonade"
+                    else "Gemma-4-26B-A4B-it-MTP-GGUF"
+                ),
+            },
         },
         naming={
             "recording_mode": naming_mode,
@@ -361,11 +384,12 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     console.print(f"  Diarization: {'enabled' if config.diarization.enabled else 'disabled'}")
     console.print(f"  Summarization: {'enabled' if config.summarization.enabled else 'disabled'}")
     if config.summarization.enabled:
-        model = (
-            config.summarization.codex.model
-            if config.summarization.backend == "codex"
-            else config.summarization.claude.model
-        )
+        if config.summarization.backend == "codex":
+            model = config.summarization.codex.model
+        elif config.summarization.backend == "claude":
+            model = config.summarization.claude.model
+        else:
+            model = config.summarization.lemonade.model_id
         console.print(f"  Summarization backend: {config.summarization.backend}")
         console.print(f"  Summarization model: {model or 'provider default'}")
         if config.summarization.backend in {"codex", "claude"}:
@@ -394,6 +418,12 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
             "Provision the selected whisper.cpp runtime?", default=True
         )
         provision_model = typer.confirm("Download and verify the selected model?", default=True)
+    provision_summarizer = False
+    if config.summarization.backend == "lemonade":
+        provision_summarizer = typer.confirm(
+            "Download/install and load the Lemonade summarization model now?",
+            default=True,
+        )
     try:
         if provision_runtime:
             _provision_runtime(config)
@@ -402,6 +432,8 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
                 _provision_lemonade_model(config, yes=False, interactive=True)
             else:
                 _provision_model(config, yes=False, interactive=True)
+        if provision_summarizer:
+            _provision_lemonade_summarizer(config, yes=False, interactive=True)
     except Exception as exc:
         console.print(f"[red]Provisioning failed: {exc}[/red]")
         console.print(
@@ -411,9 +443,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
 
     save_config(config, target)
     console.print(f"[green]Configuration saved to: {target}[/green]")
-    if provision_model and (
-        provision_runtime or config.runtime.asr_backend == "lemonade"
-    ):
+    if provision_model and (provision_runtime or config.runtime.asr_backend == "lemonade"):
         console.print("\nRuntime and transcription model verified.")
     else:
         _print_provisioning_commands(config, target)
@@ -599,18 +629,10 @@ def _default_model_index(model_options: list[dict]) -> int:
         1,
     )
     small = next(
-        (
-            index
-            for index, option in enumerate(model_options, 1)
-            if option["name"] == "small"
-        ),
+        (index for index, option in enumerate(model_options, 1) if option["name"] == "small"),
         turbo,
     )
-    return (
-        small
-        if model_options[turbo - 1]["fit"] in {"not_detected", "incompatible"}
-        else turbo
-    )
+    return small if model_options[turbo - 1]["fit"] in {"not_detected", "incompatible"} else turbo
 
 
 def show_config(resolved: bool = False, config_path: str | None = None) -> None:
@@ -1004,9 +1026,7 @@ def _print_configured_asr(configured: dict[str, object]) -> None:
             f"{runtime_manifest.get('platform', 'unknown')}-"
             f"{runtime_manifest.get('architecture', 'unknown')}"
         )
-        console.print(
-            f"  Source revision: {runtime_manifest.get('source_revision', 'unknown')}"
-        )
+        console.print(f"  Source revision: {runtime_manifest.get('source_revision', 'unknown')}")
         if runtime_manifest.get("checksum"):
             console.print(f"  Archive SHA-256: {runtime_manifest['checksum']}")
     console.print(
@@ -1335,12 +1355,62 @@ def _provision_lemonade_model(
     return options.model_id
 
 
+def _provision_lemonade_summarizer(
+    config: MeetingNotesConfig,
+    *,
+    yes: bool,
+    interactive: bool = False,
+) -> str:
+    """Download the configured local LLM through an already-running server."""
+    from meeting_notes.summarization.adapters import LemonadeAdapter
+
+    options = config.summarization.lemonade
+    adapter = LemonadeAdapter(
+        base_url=options.base_url,
+        model_id=options.model_id,
+        api_key_env=options.api_key_env,
+        connect_timeout_seconds=options.connect_timeout_seconds,
+        request_timeout_seconds=options.request_timeout_seconds,
+        provisioning_timeout_seconds=options.provisioning_timeout_seconds,
+        max_completion_tokens=options.max_completion_tokens,
+    )
+    if not adapter.is_available():
+        raise RuntimeError(
+            f"Lemonade Server is not reachable at {options.base_url}. "
+            "Start Lemonade Server manually, verify it with 'lemonade status', then retry."
+        )
+    info = adapter.model_info()
+    if info is None:
+        raise RuntimeError(
+            f"Lemonade model '{options.model_id}' is not registered in the server catalogue."
+        )
+    if not info.get("downloaded"):
+        size_gb = float(info.get("size") or 0.0)
+        threshold_gb = config.resources.large_download_confirmation_mib / 1024
+        requires_confirmation = size_gb >= threshold_gb and not yes
+        confirmed = not requires_confirmation or (
+            interactive
+            and typer.confirm(
+                f"{options.model_id} is approximately {size_gb:.1f} GiB. Download it?",
+                default=False,
+            )
+        )
+        if not confirmed:
+            raise RuntimeError(f"{options.model_id} is a large download; confirmation is required.")
+        adapter.pull_model()
+    adapter.ensure_model_ready()
+    console.print(f"[green]Lemonade summarization model ready: {options.model_id}[/green]")
+    return options.model_id
+
+
 def _provision_config(config: MeetingNotesConfig, *, yes: bool) -> None:
     if config.runtime.asr_backend == "lemonade":
         _provision_lemonade_model(config, yes=yes)
     else:
         _provision_runtime(config)
         _provision_model(config, yes=yes)
+    if config.summarization.enabled and config.summarization.backend == "lemonade":
+        _provision_lemonade_summarizer(config, yes=yes)
 
 
 def _print_provisioning_commands(config: MeetingNotesConfig, target: Path) -> None:
@@ -1350,15 +1420,21 @@ def _print_provisioning_commands(config: MeetingNotesConfig, target: Path) -> No
         console.print(f"  Start Lemonade Server manually at: {options.base_url}")
         console.print("  Verify the server: lemonade status")
         console.print(
-            f'  meeting-notes models download {config.asr.model} '
+            f"  meeting-notes models download {config.asr.model} "
             f'--backend lemonade --config "{target}" --yes'
         )
-        return
-    console.print(
-        f'  meeting-notes runtime install --device {config.runtime.device} --config "{target}"'
-    )
-    suffix = " --yes" if config.asr.model in {"medium", "large-v3", "large-v3-turbo"} else ""
-    console.print(f'  meeting-notes models download {config.asr.model} --config "{target}"{suffix}')
+    else:
+        console.print(
+            f'  meeting-notes runtime install --device {config.runtime.device} --config "{target}"'
+        )
+        suffix = " --yes" if config.asr.model in {"medium", "large-v3", "large-v3-turbo"} else ""
+        console.print(
+            f'  meeting-notes models download {config.asr.model} --config "{target}"{suffix}'
+        )
+    if config.summarization.enabled and config.summarization.backend == "lemonade":
+        options = config.summarization.lemonade
+        console.print(f"  Start Lemonade Server manually at: {options.base_url}")
+        console.print(f'  meeting-notes configure --config "{target}" --provision --yes')
 
 
 def run_models_status(output_json: bool = False) -> None:

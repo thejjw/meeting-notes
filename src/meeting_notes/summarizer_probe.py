@@ -35,19 +35,31 @@ def run_summarizer_test(
     if not adapter.is_available():
         raise RuntimeError(f"Summarization adapter '{summary.backend}' is not available")
 
-    prompt_path = Path(summary.prompt_path)
+    prompt_path = Path(
+        summary.lemonade.prompt_path if summary.backend == "lemonade" else summary.prompt_path
+    )
     prompt = (
         prompt_path.read_text(encoding="utf-8")
         if prompt_path.exists()
         else "Summarize this meeting transcript."
     )
-    schema_path = Path(summary.output_schema_path) if summary.output_schema_path else None
+    schema_path = (
+        None
+        if summary.backend == "lemonade"
+        else Path(summary.output_schema_path)
+        if summary.output_schema_path
+        else None
+    )
     started = time.monotonic()
     result = adapter.summarize(
         _PROBE_TRANSCRIPT,
         prompt=prompt,
         schema_path=schema_path,
-        timeout_seconds=summary.timeout_seconds,
+        timeout_seconds=(
+            summary.lemonade.request_timeout_seconds
+            if summary.backend == "lemonade"
+            else summary.timeout_seconds
+        ),
         metadata={
             "language": summary.language,
             "speaker_resolution": "none",
@@ -58,8 +70,9 @@ def run_summarizer_test(
         "success": True,
         "elapsed_seconds": round(time.monotonic() - started, 3),
         "provider": summarizer_provenance(summary),
-        "title": result.data.get("title"),
-        "short_title": result.data.get("short_title"),
+        "output_format": result.output_format,
+        "title": result.data.get("title") if result.data else None,
+        "short_title": result.data.get("short_title") if result.data else None,
     }
     console = Console()
     if output_json:

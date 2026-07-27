@@ -36,9 +36,7 @@ def _finalize_job(tmp_path: Path) -> tuple[Path, Path, dict, MeetingNotesConfig]
         json.dumps(transcript), encoding="utf-8"
     )
     manifest = load_manifest(job)
-    manifest["source"].update(
-        {"original_filename": source.name, "original_path": str(source)}
-    )
+    manifest["source"].update({"original_filename": source.name, "original_path": str(source)})
     config = MeetingNotesConfig(summarization={"enabled": False})
     return job, source, manifest, config
 
@@ -74,13 +72,45 @@ def test_initial_finalize_uses_nested_human_first_layout(tmp_path: Path) -> None
     assert all(Path(path).is_file() for path in result["finalized"]["external_paths"])
 
 
+def test_local_markdown_finalize_uses_h1_and_omits_summary_json(tmp_path: Path) -> None:
+    job, source, manifest, _ = _finalize_job(tmp_path)
+    (job / "summary" / "summary.json").unlink()
+    (job / "output" / "summary.json").unlink()
+    markdown = (
+        "> [!WARNING]\n> **Local AI — best-effort summary**\n\n"
+        "# Local Planning Review\n\n## Executive summary\n\nUseful result.\n"
+    )
+    (job / "summary" / "summary.md").write_text(markdown, encoding="utf-8")
+    (job / "output" / "minutes.md").write_text(markdown, encoding="utf-8")
+    manifest["source"]["creation_time"] = "2026-07-25T10:00:00+09:00"
+    manifest["stages"]["summarize"] = {
+        "provider": {
+            "output_format": "markdown",
+            "quality_tier": "best_effort_local",
+        }
+    }
+    config = MeetingNotesConfig(summarization={"enabled": True, "backend": "lemonade"})
+
+    _run_finalize(
+        job,
+        manifest,
+        config,
+        source,
+        run_id="run-local",
+        started_at="2026-07-25T00:00:00+00:00",
+    )
+
+    root = job / "output" / "finalized" / "run-local"
+    assert (root / "2026-07-25_Local-Planning-Review_meeting-notes.md").exists()
+    assert not list((root / "json").glob("*meeting-notes.json"))
+    report = (root / "run" / "report.md").read_text(encoding="utf-8")
+    assert "Summary format: `markdown`" in report
+    assert "Summary quality tier: `best_effort_local`" in report
+
+
 def test_run_report_redacts_configured_secret(tmp_path: Path) -> None:
     config = MeetingNotesConfig(
-        summarization={
-            "claude": {
-                "environment": {"ANTHROPIC_AUTH_TOKEN": "super-secret-token"}
-            }
-        }
+        summarization={"claude": {"environment": {"ANTHROPIC_AUTH_TOKEN": "super-secret-token"}}}
     )
     report = write_run_report(
         tmp_path / "report.md",

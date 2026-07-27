@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import shutil
-import sys
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,9 +15,16 @@ import typer
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
+from meeting_notes.asr.base import ASRResult, ASRSegment
+from meeting_notes.asr.registry import get_configured_backend
+from meeting_notes.audio.chunk import (
+    AudioChunk,
+    compute_chunks,
+    materialize_audio_chunks,
+    save_chunks_manifest,
+)
 from meeting_notes.audio.inspect import inspect_media
 from meeting_notes.audio.normalize import create_normalized_path, normalize_audio
-from meeting_notes.asr.registry import get_backend, get_configured_backend
 from meeting_notes.config import MeetingNotesConfig, load_config
 from meeting_notes.errors import (
     ConfigurationError,
@@ -26,12 +33,10 @@ from meeting_notes.errors import (
     StageCancelledError,
 )
 from meeting_notes.jobs import (
-    compute_stage_fingerprint,
     create_job_dir,
     load_manifest,
     make_job_slug,
     save_manifest,
-    stage_is_stale,
     update_stage_status,
 )
 from meeting_notes.publication import (
@@ -42,7 +47,6 @@ from meeting_notes.publication import (
 )
 from meeting_notes.timing import build_time_estimate_lines
 from meeting_notes.transcript.render import render_all_formats
-from meeting_notes.transcript.models import TranscriptDocument, TranscriptSegment
 
 log = structlog.get_logger()
 console = Console(stderr=True)
@@ -463,10 +467,38 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
                 logical_cores=os.cpu_count() or 1,
             )
 
-        result = backend.transcribe(
-            normalized,
-            **configured.transcribe_kwargs,
-        )
+        chunks = _transcription_chunks(normalized, manifest, config)
+        if len(chunks) == 1 and chunks[0].path == str(normalized):
+            result = backend.transcribe(
+                normalized,
+                **configured.transcribe_kwargs,
+            )
+        else:
+            materialize_audio_chunks(
+                normalized,
+                chunks,
+                job_dir / "audio" / "chunks",
+                ffmpeg_path=config.runtime.ffmpeg_path,
+            )
+            save_chunks_manifest(chunks, job_dir / "audio" / "chunks.json")
+            chunk_results: list[tuple[AudioChunk, ASRResult]] = []
+            for index, chunk in enumerate(chunks, 1):
+                console.print(
+                    f"  Transcribing audio chunk {index}/{len(chunks)} "
+                    f"({chunk.source_start:.1f}s-{chunk.source_end:.1f}s)"
+                )
+                chunk_results.append(
+                    (
+                        chunk,
+                        backend.transcribe(
+                            Path(chunk.path),
+                            **configured.transcribe_kwargs,
+                        ),
+                    )
+                )
+            result = _merge_asr_chunks(chunk_results)
+            runtime_identity["chunk_count"] = len(chunks)
+            runtime_identity["chunked"] = True
         runtime_identity["backend"] = result.backend
         runtime_identity["device"] = result.device
         if result.raw_output.get("server_version"):
@@ -493,6 +525,111 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
     except Exception:
         update_stage_status(manifest, "transcribe", "failed")
         raise
+
+
+def _transcription_chunks(
+    normalized: Path,
+    manifest: dict,
+    config: MeetingNotesConfig,
+) -> list[AudioChunk]:
+    """Plan configured chunks plus mandatory Lemonade upload-size chunks."""
+    duration = float(manifest.get("source", {}).get("duration_seconds") or 0.0)
+    if duration <= 0:
+        duration = normalized.stat().st_size / (
+            config.audio.output_sample_rate * config.audio.output_channels * 2
+        )
+
+    chunking = config.audio.chunking
+    mode = chunking.mode
+    max_minutes = chunking.max_chunk_minutes
+    if config.runtime.asr_backend == "lemonade":
+        upload_bytes = config.asr.backend_options.lemonade.max_upload_mib * 1024 * 1024
+        # Leave 10% for WAV/multipart overhead and unusual source headers.
+        safe_bytes = upload_bytes * 0.9
+        if normalized.stat().st_size > safe_bytes:
+            bytes_per_second = normalized.stat().st_size / max(duration, 0.001)
+            upload_minutes = safe_bytes / bytes_per_second / 60.0
+            max_minutes = min(max_minutes, upload_minutes)
+            mode = "fixed"
+
+    chunks = compute_chunks(
+        duration,
+        mode=mode,
+        max_chunk_minutes=max_minutes,
+        overlap_seconds=chunking.overlap_seconds,
+        trigger_duration_minutes=chunking.trigger_duration_minutes,
+    )
+    if len(chunks) == 1:
+        chunks[0].path = str(normalized)
+    return chunks
+
+
+def _merge_asr_chunks(
+    chunk_results: list[tuple[AudioChunk, ASRResult]],
+) -> ASRResult:
+    """Merge relative chunk timestamps into one absolute ASR result."""
+    if not chunk_results:
+        raise RuntimeError("No ASR chunk results were produced.")
+
+    merged: list[ASRSegment] = []
+    last_index = len(chunk_results) - 1
+    warnings: list[str] = []
+    for chunk_index, (chunk, result) in enumerate(chunk_results):
+        core_start = (
+            chunk.source_start + chunk.overlap_before if chunk_index > 0 else chunk.source_start
+        )
+        core_end = (
+            chunk.source_end - chunk.overlap_after if chunk_index < last_index else chunk.source_end
+        )
+        warnings.extend(result.warnings)
+        for segment in result.segments:
+            absolute_start = min(
+                chunk.source_end,
+                max(chunk.source_start, segment.start + chunk.source_start),
+            )
+            absolute_end = min(
+                chunk.source_end,
+                max(absolute_start, segment.end + chunk.source_start),
+            )
+            midpoint = (absolute_start + absolute_end) / 2
+            if midpoint < core_start or midpoint >= core_end:
+                continue
+            merged.append(
+                ASRSegment(
+                    id="",
+                    start=absolute_start,
+                    end=absolute_end,
+                    text=segment.text,
+                    language=segment.language,
+                    speaker=segment.speaker,
+                    confidence=segment.confidence,
+                    metrics=segment.metrics,
+                    source={
+                        **segment.source,
+                        "chunk_id": chunk.chunk_id,
+                        "chunk_source_start": chunk.source_start,
+                    },
+                )
+            )
+
+    merged.sort(key=lambda item: (item.start, item.end))
+    for index, segment in enumerate(merged):
+        segment.id = f"seg-{index:06d}"
+
+    first = chunk_results[0][1]
+    return ASRResult(
+        segments=merged,
+        language=first.language,
+        duration=max(chunk.source_end for chunk, _ in chunk_results),
+        backend=first.backend,
+        model=first.model,
+        device=first.device,
+        raw_output={
+            **first.raw_output,
+            "chunk_count": len(chunk_results),
+        },
+        warnings=warnings,
+    )
 
 
 def _resolve_whisper_threads(config: MeetingNotesConfig) -> int:
@@ -765,6 +902,89 @@ class SummarizationUnavailable(RuntimeError):
     """
 
 
+_LOCAL_SUMMARY_WARNING = (
+    "> [!WARNING]\n"
+    "> **Local AI — best-effort summary**\n"
+    "> Generated locally with `{model}` via AMD Lemonade. Local summaries may be "
+    "slower and less accurate than production-grade summarizers. Verify important "
+    "details against the transcript; configure Codex or another structured summarizer "
+    "when stronger correctness is required."
+)
+
+
+def _generate_summary_result(
+    segments: list[dict],
+    config: MeetingNotesConfig,
+    local_only: bool,
+    *,
+    extra_context: str = "",
+):
+    """Run the configured adapter and preserve its native output contract."""
+    if not config.summarization.enabled:
+        raise SummarizationUnavailable("Summarization is disabled in configuration.")
+
+    from meeting_notes.summarization.adapters import configured_adapter_options, get_adapter
+
+    adapter_name = config.summarization.backend
+    is_lemonade = adapter_name == "lemonade"
+    transcript_text = (
+        _format_local_summary_transcript(segments)
+        if is_lemonade
+        else _format_summary_transcript(segments)
+    )
+    configured_prompt = (
+        config.summarization.lemonade.prompt_path
+        if is_lemonade
+        else config.summarization.prompt_path
+    )
+    prompt_path = Path(configured_prompt)
+    prompt = (
+        prompt_path.read_text(encoding="utf-8")
+        if prompt_path.exists()
+        else "Summarize this meeting transcript."
+    )
+    if extra_context:
+        prompt = f"{extra_context}\n\n{prompt}"
+
+    schema_path = None
+    if not is_lemonade and config.summarization.output_schema_path:
+        schema_path = Path(config.summarization.output_schema_path)
+
+    if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
+        raise SummarizationUnavailable(
+            f"Summarization adapter '{adapter_name}' is not allowed with --local-only."
+        )
+
+    adapter = get_adapter(
+        adapter_name,
+        **configured_adapter_options(config.summarization),
+    )
+    if not adapter.is_available():
+        detail = (
+            f" Start Lemonade Server manually at {config.summarization.lemonade.base_url}."
+            if is_lemonade
+            else ""
+        )
+        raise SummarizationUnavailable(
+            f"Summarization adapter '{adapter_name}' is not available.{detail}"
+        )
+    timeout = (
+        config.summarization.lemonade.request_timeout_seconds
+        if is_lemonade
+        else config.summarization.timeout_seconds
+    )
+    return adapter.summarize(
+        transcript_text,
+        prompt=prompt,
+        schema_path=schema_path,
+        timeout_seconds=timeout,
+        metadata={
+            "language": config.summarization.language,
+            "speaker_resolution": "diarized" if any(s.get("speaker") for s in segments) else "none",
+        },
+    )
+
+
 def _summarize_transcript(
     segments: list[dict],
     config: MeetingNotesConfig,
@@ -778,49 +998,17 @@ def _summarize_transcript(
     (which passes `extra_context` — confirmed human answers the model should treat
     as authoritative over the raw transcript).
     """
-    if not config.summarization.enabled:
-        raise SummarizationUnavailable("Summarization is disabled in configuration.")
-
-    from meeting_notes.summarization.adapters import configured_adapter_options, get_adapter
-
-    transcript_text = _format_summary_transcript(segments)
-
-    prompt_path = Path(config.summarization.prompt_path)
-    prompt = (
-        prompt_path.read_text(encoding="utf-8")
-        if prompt_path.exists()
-        else "Summarize this meeting transcript."
+    result = _generate_summary_result(
+        segments,
+        config,
+        local_only,
+        extra_context=extra_context,
     )
-    if extra_context:
-        prompt = f"{extra_context}\n\n{prompt}"
-
-    schema_path = (
-        Path(config.summarization.output_schema_path)
-        if config.summarization.output_schema_path
-        else None
-    )
-
-    adapter_name = config.summarization.backend
-    if local_only and adapter_name in ("codex", "codex_cli", "opencode", "mimo", "claude"):
+    if result.output_format != "structured_json" or result.data is None:
         raise SummarizationUnavailable(
-            f"Summarization adapter '{adapter_name}' is not allowed with --local-only."
+            "Clarification and speaker-driven re-summarization require a structured "
+            "summary. Switch to Codex or another structured summarizer."
         )
-
-    adapter_kwargs = configured_adapter_options(config.summarization)
-    adapter = get_adapter(adapter_name, **adapter_kwargs)
-    if not adapter.is_available():
-        raise SummarizationUnavailable(f"Summarization adapter '{adapter_name}' is not available.")
-
-    result = adapter.summarize(
-        transcript_text,
-        prompt=prompt,
-        schema_path=schema_path,
-        timeout_seconds=config.summarization.timeout_seconds,
-        metadata={
-            "language": config.summarization.language,
-            "speaker_resolution": "diarized" if any(s.get("speaker") for s in segments) else "none",
-        },
-    )
     return result.data
 
 
@@ -845,22 +1033,47 @@ def _run_summarize(
         segments = raw_data.get("segments", [])
 
         try:
-            data = _summarize_transcript(segments, config, local_only)
+            result = _generate_summary_result(segments, config, local_only)
         except SummarizationUnavailable as reason:
             console.print(f"[yellow]  {reason}[/yellow]")
             update_stage_status(manifest, "summarize", "skipped")
             return manifest
 
-        # Save summary
-        summary_path = job_dir / "summary" / "summary.json"
-        summary_path.parent.mkdir(parents=True, exist_ok=True)
-        summary_path.write_text(
-            json.dumps(data, indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        manifest["stages"]["summarize"]["provider"] = summarizer_provenance(
-            config.summarization
-        )
+        summary_dir = job_dir / "summary"
+        summary_dir.mkdir(parents=True, exist_ok=True)
+        provider = summarizer_provenance(config.summarization)
+        if result.output_format == "markdown":
+            markdown = result.markdown or ""
+            model = config.summarization.lemonade.model_id
+            warning = _LOCAL_SUMMARY_WARNING.format(model=model)
+            (summary_dir / "summary.md").write_text(
+                f"{warning}\n\n{markdown.strip()}\n",
+                encoding="utf-8",
+            )
+            for stale in (summary_dir / "summary.json", job_dir / "output" / "summary.json"):
+                stale.unlink(missing_ok=True)
+            provider.update(
+                {
+                    "output_format": "markdown",
+                    "quality_tier": "best_effort_local",
+                    "metrics": result.metrics,
+                }
+            )
+        else:
+            if result.data is None:
+                raise RuntimeError("Structured summarizer returned no JSON data.")
+            (summary_dir / "summary.json").write_text(
+                json.dumps(result.data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (summary_dir / "summary.md").unlink(missing_ok=True)
+            provider.update(
+                {
+                    "output_format": "structured_json",
+                    "quality_tier": "structured",
+                }
+            )
+        manifest["stages"]["summarize"]["provider"] = provider
 
         update_stage_status(manifest, "summarize", "completed")
         return manifest
@@ -884,6 +1097,22 @@ def _format_summary_transcript(segments: list[dict]) -> str:
     return "\n".join(transcript_lines)
 
 
+def _format_local_summary_transcript(segments: list[dict]) -> str:
+    """Format a compact transcript without evidence IDs for local Markdown output."""
+    lines: list[str] = []
+    for segment in segments:
+        start = float(segment.get("start", 0.0))
+        hours = int(start // 3600)
+        minutes = int((start % 3600) // 60)
+        seconds = int(start % 60)
+        speaker = str(segment.get("speaker") or "").strip()
+        prefix = f"[{hours:02d}:{minutes:02d}:{seconds:02d}]"
+        if speaker:
+            prefix = f"{prefix} {speaker}:"
+        lines.append(f"{prefix} {str(segment.get('text') or '').strip()}")
+    return "\n".join(line for line in lines if line.strip())
+
+
 def _run_render(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dict:
     """Stage: Render meeting minutes."""
     update_stage_status(manifest, "render", "running")
@@ -892,8 +1121,15 @@ def _run_render(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> di
         from meeting_notes.minutes.render import render_minutes, save_minutes
         from meeting_notes.audio.inspect import MediaInfo
 
-        # Load summary
+        markdown_summary = job_dir / "summary" / "summary.md"
         summary_path = job_dir / "summary" / "summary.json"
+        if markdown_summary.exists():
+            minutes_path = job_dir / "output" / "minutes.md"
+            minutes_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(markdown_summary, minutes_path)
+            (job_dir / "output" / "summary.json").unlink(missing_ok=True)
+            update_stage_status(manifest, "render", "completed")
+            return manifest
         if not summary_path.exists():
             console.print("[yellow]  No summary found, skipping render[/yellow]")
             update_stage_status(manifest, "render", "skipped")
@@ -952,16 +1188,23 @@ def _run_finalize(
             sanitize_short_title,
         )
 
-        # Load summary
+        markdown_summary = job_dir / "summary" / "summary.md"
         summary_path = job_dir / "summary" / "summary.json"
-        if not summary_path.exists():
+        if not summary_path.exists() and not markdown_summary.exists():
             console.print("[yellow]  No summary found, skipping finalize[/yellow]")
             update_stage_status(manifest, "finalize", "skipped")
             return manifest
 
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        if summary_path.exists():
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            raw_title = str(summary.get("short_title", "meeting"))
+        else:
+            summary = {}
+            markdown = markdown_summary.read_text(encoding="utf-8")
+            heading = re.search(r"(?m)^#\s+(.+?)\s*$", markdown)
+            raw_title = heading.group(1) if heading else source.stem
         short_title = sanitize_short_title(
-            summary.get("short_title", "meeting"),
+            raw_title,
             max_length=config.naming.max_short_title_characters,
         )
         media_creation = manifest.get("source", {}).get("creation_time", "")
@@ -1267,5 +1510,3 @@ def run_clean(job_dir: str, stage: str | None = None, yes: bool = False) -> None
             if dir_path.exists():
                 shutil.rmtree(dir_path)
         console.print(f"[green]Cleaned all artifacts[/green]")
-
-
