@@ -30,6 +30,10 @@ GENERIC_DEFAULT_REAL_TIME_FACTOR: dict[str, float] = {
     "transcribe": 1.34,
     "diarize": 0.51,
 }
+GENERIC_ASR_REAL_TIME_FACTOR: dict[tuple[str, str, str], float] = {
+    # Measured on the local Lemonade 11.5 / NPU five-minute validation clip.
+    ("lemonade", "npu", "large-v3-turbo"): 0.11,
+}
 
 
 def _parse_iso(value: str | None) -> datetime | None:
@@ -114,6 +118,7 @@ def most_recent_real_time_factor(
     data_dir: Path,
     stage_name: str,
     *,
+    match: dict[str, str] | None = None,
     exclude_job_dir: Path | None = None,
 ) -> float | None:
     """Real-time factor of the most recently completed job for a stage, any config.
@@ -140,6 +145,8 @@ def most_recent_real_time_factor(
 
         stage = manifest.get("stages", {}).get(stage_name, {})
         if stage.get("status") != "completed":
+            continue
+        if match and not _runtime_matches(stage, match):
             continue
 
         ended_at = _parse_iso(stage.get("ended_at"))
@@ -218,7 +225,20 @@ def build_time_estimate_lines(
             total_seconds += estimate
             continue
 
-        rtf = most_recent_real_time_factor(data_dir, stage_name, exclude_job_dir=exclude_job_dir)
+        loose_match = (
+            {
+                "backend": match["backend"],
+                "device": match["device"],
+            }
+            if stage_name == "transcribe"
+            else None
+        )
+        rtf = most_recent_real_time_factor(
+            data_dir,
+            stage_name,
+            match=loose_match,
+            exclude_job_dir=exclude_job_dir,
+        )
         if rtf is not None:
             estimate = rtf * audio_duration_seconds
             total_seconds += estimate
@@ -228,7 +248,18 @@ def build_time_estimate_lines(
             )
             continue
 
-        generic_rtf = GENERIC_DEFAULT_REAL_TIME_FACTOR.get(stage_name)
+        generic_rtf = (
+            GENERIC_ASR_REAL_TIME_FACTOR.get(
+                (match["backend"], match["device"], match["model"])
+            )
+            if stage_name == "transcribe"
+            else None
+        )
+        if generic_rtf is None and (
+            stage_name != "transcribe"
+            or (match["backend"] == "whisper_cpp" and match["device"] == "cpu")
+        ):
+            generic_rtf = GENERIC_DEFAULT_REAL_TIME_FACTOR.get(stage_name)
         if generic_rtf is None:
             no_data.append(label)
             continue

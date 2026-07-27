@@ -198,7 +198,7 @@ def models_info(
 @models_app.command("download")
 def models_download(
     model: Annotated[str, typer.Argument(help="Model name.")],
-    backend: Annotated[str, typer.Option("--backend")] = "whisper_cpp",
+    backend: Annotated[str, typer.Option("--backend")] = "auto",
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
     config_path: Annotated[Optional[str], typer.Option("--config")] = None,
 ) -> None:

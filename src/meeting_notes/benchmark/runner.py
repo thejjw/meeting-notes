@@ -13,11 +13,10 @@ import psutil
 import structlog
 import yaml
 
-from meeting_notes.asr.registry import get_backend
+from meeting_notes.asr.registry import get_configured_backend
 from meeting_notes.audio.inspect import inspect_media
 from meeting_notes.audio.normalize import normalize_audio
 from meeting_notes.config import MeetingNotesConfig
-from meeting_notes.subprocess_utils import run_command
 
 log = structlog.get_logger()
 
@@ -80,15 +79,13 @@ def run_single_benchmark(
             normalized = Path(tmp_dir) / "normalized.wav"
             normalize_audio(audio_path, normalized)
 
-            # Get ASR backend (only pass executable for whisper_cpp)
-            backend_kwargs = {}
-            if result.backend == "whisper_cpp":
-                backend_kwargs["executable"] = config_overrides.get("runtime", {}).get("whisper_cpp_path", "whisper-cli")
-
-            backend = get_backend(result.backend, **backend_kwargs)
-
-            if not backend.is_available():
-                result.error = f"Backend '{result.backend}' not available"
+            config = MeetingNotesConfig(**config_overrides)
+            if model_path is not None:
+                config.asr.model_path = str(model_path)
+            configured = get_configured_backend(config)
+            readiness = configured.check_readiness()
+            if not readiness.available:
+                result.error = readiness.detail
                 return result
 
             # Measure model load time
@@ -96,12 +93,9 @@ def run_single_benchmark(
 
             # Run transcription
             transcribe_start = time.perf_counter()
-            asr_result = backend.transcribe(
+            asr_result = configured.backend.transcribe(
                 normalized,
-                model=result.model,
-                model_path=model_path,
-                language=config_overrides.get("asr", {}).get("language", "ko"),
-                threads=config_overrides.get("runtime", {}).get("threads", 0),
+                **configured.transcribe_kwargs,
             )
             transcribe_end = time.perf_counter()
 
@@ -109,6 +103,7 @@ def run_single_benchmark(
             result.transcription_seconds = transcribe_end - transcribe_start
             result.segment_count = len(asr_result.segments)
             result.character_count = sum(len(s.text) for s in asr_result.segments)
+            result.device = asr_result.device or result.device
 
             # Calculate metrics
             if result.transcription_seconds > 0:

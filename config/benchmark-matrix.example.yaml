@@ -55,3 +55,15 @@ runs:
       backend_options:
         whisper_cpp:
           model_variant: q5_0
+
+  - name: amd-lemonade-npu-turbo
+    runtime:
+      asr_backend: lemonade
+      device: npu
+    asr:
+      model: large-v3-turbo
+      model_path: null
+      backend_options:
+        lemonade:
+          base_url: http://127.0.0.1:13305
+          model_id: Whisper-Large-v3-Turbo

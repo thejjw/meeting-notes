@@ -219,9 +219,43 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         raise typer.Exit(1)
     selected_backend = backend_options[choice - 1]
 
+    lemonade_url: str | None = None
+    if selected_backend["runtime_asr_backend"] == "lemonade":
+        default_url = "http://127.0.0.1:13305"
+        lemonade_url = typer.prompt(
+            "Lemonade Server URL",
+            default=default_url,
+        ).strip().rstrip("/")
+        from meeting_notes.asr.lemonade import LemonadeASRBackend
+
+        lemonade = LemonadeASRBackend(
+            base_url=lemonade_url,
+            connect_timeout_seconds=1.5,
+        )
+        if lemonade.is_available():
+            console.print(f"[green]Lemonade Server found at {lemonade_url}.[/green]")
+        else:
+            console.print(
+                f"[yellow]Lemonade Server is not reachable at {lemonade_url}.[/yellow]\n"
+                "Start Lemonade Server manually, then retry provisioning. "
+                "You can verify it with: lemonade status"
+            )
+
     # Step 2: Model selection
     console.print(f"\n[bold]Models compatible with {selected_backend['name']}[/bold]\n")
-    model_options = _build_model_options(diag, selected_backend["runtime_device"])
+    if selected_backend["runtime_asr_backend"] == "lemonade":
+        model_options = [
+            {
+                "name": "large-v3-turbo",
+                "accuracy": "recommended multilingual Whisper model",
+                "download": "~1.5 GiB, managed by Lemonade",
+                "runtime_memory": "managed by Lemonade",
+                "recommended_ram": "managed by Lemonade",
+                "fit": "available through Lemonade catalogue",
+            }
+        ]
+    else:
+        model_options = _build_model_options(diag, selected_backend["runtime_device"])
     default_model_idx = _default_model_index(model_options)
     for i, opt in enumerate(model_options, 1):
         fit = opt["fit"]
@@ -275,6 +309,18 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
 
     # Build config
     target = Path(config_path) if config_path else DEFAULT_CONFIG_PATH
+    asr_config: dict[str, object] = {
+        "model": selected_model["name"],
+        "language": lang_code,
+    }
+    if lemonade_url:
+        asr_config["model_path"] = None
+        asr_config["backend_options"] = {
+            "lemonade": {
+                "base_url": lemonade_url,
+                "model_id": "Whisper-Large-v3-Turbo",
+            }
+        }
     config = MeetingNotesConfig(
         setup=SetupConfig(
             completed=True,
@@ -284,10 +330,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
             "device": selected_backend["runtime_device"],
             "asr_backend": selected_backend["runtime_asr_backend"],
         },
-        asr={
-            "model": selected_model["name"],
-            "language": lang_code,
-        },
+        asr=asr_config,
         diarization={
             "enabled": enable_diarization,
         },
@@ -340,13 +383,25 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         console.print("[yellow]Configuration cancelled.[/yellow]")
         raise typer.Exit(0)
 
-    provision_runtime = typer.confirm("Provision the selected whisper.cpp runtime?", default=True)
-    provision_model = typer.confirm("Download and verify the selected model?", default=True)
+    if config.runtime.asr_backend == "lemonade":
+        provision_runtime = False
+        provision_model = typer.confirm(
+            "Download/install and load the model through Lemonade now?",
+            default=True,
+        )
+    else:
+        provision_runtime = typer.confirm(
+            "Provision the selected whisper.cpp runtime?", default=True
+        )
+        provision_model = typer.confirm("Download and verify the selected model?", default=True)
     try:
         if provision_runtime:
             _provision_runtime(config)
         if provision_model:
-            _provision_model(config, yes=False, interactive=True)
+            if config.runtime.asr_backend == "lemonade":
+                _provision_lemonade_model(config, yes=False, interactive=True)
+            else:
+                _provision_model(config, yes=False, interactive=True)
     except Exception as exc:
         console.print(f"[red]Provisioning failed: {exc}[/red]")
         console.print(
@@ -356,7 +411,9 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
 
     save_config(config, target)
     console.print(f"[green]Configuration saved to: {target}[/green]")
-    if provision_runtime and provision_model:
+    if provision_model and (
+        provision_runtime or config.runtime.asr_backend == "lemonade"
+    ):
         console.print("\nRuntime and transcription model verified.")
     else:
         _print_provisioning_commands(config, target)
@@ -388,6 +445,34 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
             "profile": "safe-cpu",
             "runtime_device": "cpu",
             "runtime_asr_backend": "whisper_cpp",
+        }
+    )
+
+    # AMD Lemonade (external server, opt-in)
+    from meeting_notes.asr.lemonade import LemonadeASRBackend
+
+    lemonade_url = "http://127.0.0.1:13305"
+    lemonade = LemonadeASRBackend(
+        base_url=lemonade_url,
+        connect_timeout_seconds=0.75,
+    )
+    lemonade_ready = lemonade.is_available()
+    options.append(
+        {
+            "name": "AMD Lemonade NPU (opt-in)",
+            "backend": "Lemonade Server / whisper.cpp NPU",
+            "model": "large-v3-turbo",
+            "memory": "managed by Lemonade",
+            "recommended_ram": "system dependent",
+            "compatibility": "available" if lemonade_ready else "server not running",
+            "notes": (
+                f"detected at {lemonade_url}"
+                if lemonade_ready
+                else f"start Lemonade Server manually; default URL is {lemonade_url}"
+            ),
+            "profile": "amd-lemonade",
+            "runtime_device": "npu",
+            "runtime_asr_backend": "lemonade",
         }
     )
 
@@ -605,6 +690,31 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
         checks["config_error"] = str(exc)
         return checks
 
+    if config.runtime.asr_backend == "lemonade":
+        from meeting_notes.asr.registry import get_configured_backend
+
+        readiness = get_configured_backend(config).check_readiness()
+        checks.update(
+            {
+                "configured": True,
+                "asr_backend": "lemonade",
+                "device": config.runtime.device,
+                "runtime_ready": readiness.available,
+                "runtime_detail": readiness.detail,
+                "server_url": readiness.metadata.get("base_url"),
+                "server_version": readiness.version,
+                "model_name": config.asr.model,
+                "lemonade_model_id": readiness.metadata.get("model_id"),
+                "model_downloaded": readiness.metadata.get("downloaded", False),
+                "model_loaded": readiness.metadata.get("loaded", False),
+                "actual_device": readiness.device,
+                "diarization_enabled": config.diarization.enabled,
+                "latest_transcript": _latest_transcript_metadata(config),
+            }
+        )
+        _add_diarization_checks(checks, config)
+        return checks
+
     from meeting_notes.models import verify_model
     from meeting_notes.runtime import find_manifest_for_executable
 
@@ -631,21 +741,6 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
     model_valid, model_detail = (
         verify_model(config.asr.model, model) if model else (False, "model_path is not configured")
     )
-    from meeting_notes.diarization.setup import resolve_hf_token
-
-    token, token_source = resolve_hf_token(config.diarization.token_env)
-    diarization_model_path = (
-        Path(config.diarization.model_path) if config.diarization.model_path else None
-    )
-    local_diarization_model_ready = bool(diarization_model_path and diarization_model_path.exists())
-    try:
-        from importlib.metadata import version
-
-        pyannote_version = version("pyannote.audio")
-        pyannote_installed = True
-    except Exception:
-        pyannote_installed = False
-        pyannote_version = None
     latest_transcript = _latest_transcript_metadata(config)
     checks.update(
         {
@@ -664,20 +759,41 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
             "model_verified": model_valid,
             "model_detail": model_detail,
             "diarization_enabled": config.diarization.enabled,
+            "latest_transcript": latest_transcript,
+        }
+    )
+    _add_diarization_checks(checks, config)
+    return checks
+
+
+def _add_diarization_checks(
+    checks: dict[str, object],
+    config: MeetingNotesConfig,
+) -> None:
+    from meeting_notes.diarization.setup import resolve_hf_token
+
+    token, token_source = resolve_hf_token(config.diarization.token_env)
+    model_path = Path(config.diarization.model_path) if config.diarization.model_path else None
+    try:
+        from importlib.metadata import version
+
+        pyannote_version = version("pyannote.audio")
+        pyannote_installed = True
+    except Exception:
+        pyannote_installed = False
+        pyannote_version = None
+    checks.update(
+        {
             "diarization_model": config.diarization.model,
-            "diarization_model_path": (
-                str(diarization_model_path) if diarization_model_path else None
-            ),
-            "local_diarization_model_ready": local_diarization_model_ready,
+            "diarization_model_path": str(model_path) if model_path else None,
+            "local_diarization_model_ready": bool(model_path and model_path.exists()),
             "token_env": config.diarization.token_env,
             "pyannote_installed": pyannote_installed,
             "pyannote_version": pyannote_version,
             "hf_token_ready": bool(token),
             "hf_token_source": token_source,
-            "latest_transcript": latest_transcript,
         }
     )
-    return checks
 
 
 def _latest_transcript_metadata(config: MeetingNotesConfig) -> dict[str, object] | None:
@@ -743,6 +859,50 @@ def _diarization_recommendations(
 
 def _run_smoke_test(config_path: str | None) -> dict[str, object]:
     config = load_config(config_path)
+    if config.runtime.asr_backend == "lemonade":
+        from meeting_notes.asr.registry import get_configured_backend
+
+        configured = get_configured_backend(config)
+        readiness = configured.check_readiness()
+        if not readiness.available:
+            return {"success": False, "detail": readiness.detail}
+        ffmpeg = config.runtime.ffmpeg_path
+        with tempfile.TemporaryDirectory(prefix="meeting-notes-smoke-") as temp:
+            wav = Path(temp) / "silence.wav"
+            generated = subprocess.run(
+                [
+                    ffmpeg,
+                    "-hide_banner",
+                    "-loglevel",
+                    "error",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "anullsrc=r=16000:cl=mono",
+                    "-t",
+                    "0.25",
+                    "-c:a",
+                    "pcm_s16le",
+                    "-y",
+                    str(wav),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if generated.returncode:
+                return {
+                    "success": False,
+                    "detail": f"FFmpeg failed: {generated.stderr.strip()}",
+                }
+            try:
+                configured.backend.transcribe(wav, **configured.transcribe_kwargs)
+            except (RuntimeError, ValueError) as error:
+                return {"success": False, "detail": str(error)}
+            return {
+                "success": True,
+                "detail": f"Lemonade transcription succeeded on {config.runtime.device}",
+            }
     executable = Path(config.runtime.whisper_cpp_path)
     model = Path(config.asr.model_path or "")
     if not executable.is_file():
@@ -806,6 +966,56 @@ def _run_smoke_test(config_path: str | None) -> dict[str, object]:
         return {"success": success, "vulkan_initialized": vulkan_seen, "detail": detail}
 
 
+def _print_configured_asr(configured: dict[str, object]) -> None:
+    if configured["asr_backend"] == "lemonade":
+        ready = bool(configured["runtime_ready"])
+        style = "green" if ready else "red"
+        console.print("  ASR backend: [bold]lemonade[/bold]")
+        console.print(f"  Server URL: {configured['server_url']}")
+        console.print(f"  Server version: {configured['server_version'] or 'unknown'}")
+        console.print(f"  Model: {configured['lemonade_model_id']}")
+        console.print(f"  Downloaded: {'yes' if configured['model_downloaded'] else 'no'}")
+        console.print(f"  Loaded: {'yes' if configured['model_loaded'] else 'no'}")
+        console.print(f"  Device: {configured['actual_device'] or configured['device']}")
+        console.print(f"  Status: [{style}]{configured['runtime_detail']}[/{style}]")
+        return
+
+    exe_style = "green" if configured["executable_exists"] else "red"
+    model_style = "green" if configured["model_verified"] else "red"
+    runnable_style = "green" if configured["executable_runnable"] else "red"
+    console.print(f"  ASR backend: [bold]{configured['asr_backend']}[/bold]")
+    console.print(
+        f"  Configured runtime: [{runnable_style}]"
+        f"{'ready' if configured['executable_runnable'] else 'not runnable'}"
+        f"[/{runnable_style}]"
+    )
+    console.print(f"  Executable: [{exe_style}]{configured['executable']}[/{exe_style}]")
+    if configured["manifest"] is None:
+        console.print("  [yellow]Manifest: user-supplied/unmanaged executable[/yellow]")
+    elif not configured["manifest_backend_matches"]:
+        console.print("  [red]Manifest backend does not match configured device.[/red]")
+    else:
+        runtime_manifest = configured["manifest"]
+        assert isinstance(runtime_manifest, dict)
+        console.print(
+            "  Managed runtime: "
+            f"whisper.cpp {runtime_manifest.get('version', 'unknown')} / "
+            f"{runtime_manifest.get('backend', 'unknown')} / "
+            f"{runtime_manifest.get('platform', 'unknown')}-"
+            f"{runtime_manifest.get('architecture', 'unknown')}"
+        )
+        console.print(
+            f"  Source revision: {runtime_manifest.get('source_revision', 'unknown')}"
+        )
+        if runtime_manifest.get("checksum"):
+            console.print(f"  Archive SHA-256: {runtime_manifest['checksum']}")
+    console.print(
+        f"  Model: [{model_style}]{configured['model_name']} — "
+        f"{configured['model_detail']}[/{model_style}]"
+    )
+    console.print(f"  Model path: {configured['model']}")
+
+
 def run_doctor(
     output_json: bool = False,
     config_path: str | None = None,
@@ -829,40 +1039,7 @@ def run_doctor(
         if not configured["configured"]:
             console.print(f"  [yellow]{configured.get('config_error')}[/yellow]")
         else:
-            exe_style = "green" if configured["executable_exists"] else "red"
-            model_style = "green" if configured["model_verified"] else "red"
-            runnable_style = "green" if configured["executable_runnable"] else "red"
-            console.print(f"  ASR backend: [bold]{configured['asr_backend']}[/bold]")
-            console.print(
-                f"  Configured runtime: [{runnable_style}]"
-                f"{'ready' if configured['executable_runnable'] else 'not runnable'}"
-                f"[/{runnable_style}]"
-            )
-            console.print(f"  Executable: [{exe_style}]{configured['executable']}[/{exe_style}]")
-            if configured["manifest"] is None:
-                console.print("  [yellow]Manifest: user-supplied/unmanaged executable[/yellow]")
-            elif not configured["manifest_backend_matches"]:
-                console.print("  [red]Manifest backend does not match configured device.[/red]")
-            else:
-                runtime_manifest = configured["manifest"]
-                assert isinstance(runtime_manifest, dict)
-                console.print(
-                    "  Managed runtime: "
-                    f"whisper.cpp {runtime_manifest.get('version', 'unknown')} / "
-                    f"{runtime_manifest.get('backend', 'unknown')} / "
-                    f"{runtime_manifest.get('platform', 'unknown')}-"
-                    f"{runtime_manifest.get('architecture', 'unknown')}"
-                )
-                console.print(
-                    f"  Source revision: {runtime_manifest.get('source_revision', 'unknown')}"
-                )
-                if runtime_manifest.get("checksum"):
-                    console.print(f"  Archive SHA-256: {runtime_manifest['checksum']}")
-            console.print(
-                f"  Model: [{model_style}]{configured['model_name']} — "
-                f"{configured['model_detail']}[/{model_style}]"
-            )
-            console.print(f"  Model path: {configured['model']}")
+            _print_configured_asr(configured)
             latest = configured.get("latest_transcript")
             if isinstance(latest, dict):
                 console.print(
@@ -914,11 +1091,20 @@ def run_doctor(
             and configured.get("asr_backend") == "whisper_cpp"
             and configured.get("executable_runnable")
         )
-        if not diag.tools.whisper_cpp_available and not configured_runtime_ready:
+        lemonade_selected = configured.get("asr_backend") == "lemonade"
+        if (
+            not lemonade_selected
+            and not diag.tools.whisper_cpp_available
+            and not configured_runtime_ready
+        ):
             console.print(
                 "  [yellow]Install whisper.cpp or build from source: https://github.com/ggerganov/whisper.cpp[/yellow]"
             )
-        elif not diag.tools.whisper_cpp_available and configured_runtime_ready:
+        elif (
+            not lemonade_selected
+            and not diag.tools.whisper_cpp_available
+            and configured_runtime_ready
+        ):
             console.print(
                 "  [green]No PATH installation is needed; the configured managed "
                 "whisper.cpp runtime is ready.[/green]"
@@ -931,7 +1117,7 @@ def run_doctor(
             console.print("  [dim]Codex CLI not installed: https://github.com/openai/codex[/dim]")
         if not diag.tools.claude_available:
             console.print("  [dim]Claude Code not installed: https://code.claude.com/docs[/dim]")
-        if not diag.gpu.available:
+        if not diag.gpu.available and not lemonade_selected:
             console.print("  [dim]No GPU acceleration detected. Using CPU mode.[/dim]")
 
 
@@ -1086,13 +1272,88 @@ def _provision_model(config: MeetingNotesConfig, *, yes: bool, interactive: bool
     return path
 
 
+def _provision_lemonade_model(
+    config: MeetingNotesConfig,
+    *,
+    yes: bool,
+    interactive: bool = False,
+) -> str:
+    """Install and load the configured model through a running Lemonade server."""
+    from meeting_notes.asr.lemonade import LemonadeASRBackend
+
+    options = config.asr.backend_options.lemonade
+    backend = LemonadeASRBackend(
+        base_url=options.base_url,
+        model_id=options.model_id,
+        api_key_env=options.api_key_env,
+        expected_device=config.runtime.device,
+        connect_timeout_seconds=options.connect_timeout_seconds,
+        provisioning_timeout_seconds=options.provisioning_timeout_seconds,
+        transcription_timeout_seconds=options.transcription_timeout_seconds,
+    )
+    if not backend.is_available():
+        raise RuntimeError(
+            f"Lemonade Server is not reachable at {options.base_url}. "
+            "Start Lemonade Server manually, verify it with 'lemonade status', then retry."
+        )
+    info = backend.model_info(show_all=True)
+    if info is None:
+        raise RuntimeError(
+            f"Lemonade model '{options.model_id}' is not registered in the server catalogue."
+        )
+    if not info.get("downloaded"):
+        size_gb = float(info.get("size") or 0.0)
+        threshold_gb = config.resources.large_download_confirmation_mib / 1024
+        if size_gb >= threshold_gb and not yes:
+            if interactive and typer.confirm(
+                f"{options.model_id} is approximately {size_gb:.1f} GiB. Download it?",
+                default=False,
+            ):
+                pass
+            else:
+                raise RuntimeError(
+                    f"{options.model_id} is a large download; rerun with --yes to confirm."
+                )
+
+        last_bucket = -1
+
+        def report_progress(event: dict[str, object]) -> None:
+            nonlocal last_bucket
+            percent = int(float(event.get("percent") or 0))
+            bucket = percent // 10
+            if bucket != last_bucket or event.get("event") == "complete":
+                last_bucket = bucket
+                console.print(f"  Lemonade model download: {percent}%")
+
+        backend.pull_model(progress=report_progress)
+    readiness = backend.load_model()
+    config.asr.model_path = None
+    console.print(
+        f"[green]Lemonade model ready: {options.model_id} / "
+        f"{readiness.device} / server {readiness.version}[/green]"
+    )
+    return options.model_id
+
+
 def _provision_config(config: MeetingNotesConfig, *, yes: bool) -> None:
-    _provision_runtime(config)
-    _provision_model(config, yes=yes)
+    if config.runtime.asr_backend == "lemonade":
+        _provision_lemonade_model(config, yes=yes)
+    else:
+        _provision_runtime(config)
+        _provision_model(config, yes=yes)
 
 
 def _print_provisioning_commands(config: MeetingNotesConfig, target: Path) -> None:
     console.print("\n[bold]Provisioning still required[/bold]")
+    if config.runtime.asr_backend == "lemonade":
+        options = config.asr.backend_options.lemonade
+        console.print(f"  Start Lemonade Server manually at: {options.base_url}")
+        console.print("  Verify the server: lemonade status")
+        console.print(
+            f'  meeting-notes models download {config.asr.model} '
+            f'--backend lemonade --config "{target}" --yes'
+        )
+        return
     console.print(
         f'  meeting-notes runtime install --device {config.runtime.device} --config "{target}"'
     )
@@ -1142,13 +1403,52 @@ def run_models_info(model: str, backend: str = "whisper_cpp") -> None:
 
 def run_models_download(
     model: str,
-    backend: str = "whisper_cpp",
+    backend: str = "auto",
     yes: bool = False,
     config_path: str | None = None,
 ) -> None:
     """Download a model."""
+    selected_config: MeetingNotesConfig | None = None
+    if config_path is not None or backend in {"auto", "lemonade"}:
+        try:
+            selected_config = load_config(config_path)
+        except (ConfigNotFoundError, ConfigValidationError):
+            if backend == "lemonade":
+                console.print(
+                    "[red]Lemonade downloads require an active configuration so the "
+                    "server URL and model ID are unambiguous.[/red]"
+                )
+                raise typer.Exit(2) from None
+    if backend == "auto":
+        backend = selected_config.runtime.asr_backend if selected_config else "whisper_cpp"
+    if backend == "lemonade":
+        if selected_config is None:
+            console.print(
+                "[red]Lemonade downloads require --config so the server URL and model ID "
+                "are unambiguous.[/red]"
+            )
+            raise typer.Exit(2)
+        if model != "large-v3-turbo":
+            console.print(
+                "[red]The Lemonade adapter currently supports the canonical "
+                "model name 'large-v3-turbo'.[/red]"
+            )
+            raise typer.Exit(2)
+        selected_config.asr.model = model
+        try:
+            _provision_lemonade_model(selected_config, yes=yes, interactive=False)
+            target = _target_config_path(config_path)
+            save_config(selected_config, target)
+            console.print(
+                f"[green]Verified Lemonade model installed: "
+                f"{selected_config.asr.backend_options.lemonade.model_id}[/green]"
+            )
+        except RuntimeError as exc:
+            console.print(f"[red]Lemonade model installation failed: {exc}[/red]")
+            raise typer.Exit(1) from exc
+        return
     if backend != "whisper_cpp":
-        console.print("[red]Managed downloads currently support only --backend whisper_cpp.[/red]")
+        console.print("[red]--backend must be auto, whisper_cpp, or lemonade.[/red]")
         raise typer.Exit(2)
     from meeting_notes.artifacts import MODEL_ARTIFACTS
     from meeting_notes.models import ModelInstallError, download_model
@@ -1167,7 +1467,7 @@ def run_models_download(
         path = download_model(model)
         if config_path is not None:
             target = _target_config_path(config_path)
-            config = load_config(str(target))
+            config = selected_config or load_config(str(target))
             config.asr.model = model
             config.asr.model_path = str(path)
             config.asr.model_cache_dir = str(path.parent)

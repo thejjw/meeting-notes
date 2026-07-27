@@ -276,10 +276,40 @@ generally improves as model size increases:
 | Backend | Install | Notes |
 |---------|---------|-------|
 | `whisper_cpp` | Managed CPU binary or Vulkan source build | **Default** |
+| `lemonade` | Running AMD Lemonade Server | Opt-in NPU acceleration |
 | `openai_whisper` | `uv pip install openai-whisper` | Python/PyTorch, opt-in |
 | `faster_whisper` | `uv pip install faster-whisper` | CPU/NVIDIA CUDA, opt-in |
 
 The default `whisper_cpp` backend uses a pre-built Windows binary from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases). No Docker or compilation needed for the common case.
+
+### AMD Lemonade NPU acceleration
+
+Run `meeting-notes configure` and select **AMD Lemonade NPU** to opt in. The
+wizard supplies the standard server URL, `http://127.0.0.1:13305`; press Enter
+unless your server uses a custom address.
+
+Start Lemonade Server yourself before configuration or processing:
+
+```powershell
+lemonade status
+uv run meeting-notes configure
+```
+
+Once the server is reachable, the wizard can download, install, and load
+`Whisper-Large-v3-Turbo` through Lemonade. Large downloads require explicit
+confirmation. Meeting-notes does not start or stop Lemonade, and it fails
+clearly rather than silently falling back to CPU if the server, model, or NPU
+is unavailable.
+
+Useful verification and provisioning commands:
+
+```powershell
+uv run meeting-notes doctor --smoke-test
+uv run meeting-notes models download large-v3-turbo --backend lemonade --yes
+```
+
+The Lemonade adapter uses timestamped `verbose_json` responses, so subtitles,
+speaker alignment, and evidence timestamps continue to work.
 
 ## Summarization Backends
 

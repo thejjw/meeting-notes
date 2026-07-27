@@ -37,6 +37,17 @@ class ASRResult:
     warnings: list[str] = field(default_factory=list)
 
 
+@dataclass
+class ASRReadiness:
+    """Structured availability result used by preflight checks and diagnostics."""
+
+    available: bool
+    detail: str
+    version: str = ""
+    device: str = ""
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
 class ASRBackend(ABC):
     """Abstract base class for ASR backends."""
 
@@ -83,3 +94,24 @@ class ASRBackend(ABC):
     @abstractmethod
     def get_version(self) -> str:
         """Return the version string of the installed backend."""
+
+    def check_readiness(
+        self,
+        *,
+        model: str = "",
+        expected_device: str = "",
+        allow_provision: bool = False,
+    ) -> ASRReadiness:
+        """Return actionable backend readiness information.
+
+        Local adapters retain their existing availability behavior. Service
+        adapters can override this to inspect models and accelerator state.
+        """
+        del model, allow_provision
+        available = self.is_available()
+        return ASRReadiness(
+            available=available,
+            detail="backend is ready" if available else "backend is unavailable",
+            version=self.get_version(),
+            device=expected_device,
+        )

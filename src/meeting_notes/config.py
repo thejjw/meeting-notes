@@ -80,12 +80,24 @@ class FasterWhisperBackendOptions(BaseModel):
     extra_options: dict[str, Any] = Field(default_factory=dict)
 
 
+class LemonadeBackendOptions(BaseModel):
+    """AMD Lemonade server connection and model options."""
+
+    base_url: str = "http://127.0.0.1:13305"
+    model_id: str = "Whisper-Large-v3-Turbo"
+    api_key_env: str = "LEMONADE_API_KEY"
+    connect_timeout_seconds: float = 5.0
+    provisioning_timeout_seconds: float = 3600.0
+    transcription_timeout_seconds: float = 7200.0
+
+
 class ASRBackendOptions(BaseModel):
     """Backend-specific ASR options."""
 
     whisper_cpp: WhisperCppBackendOptions = Field(default_factory=WhisperCppBackendOptions)
     openai_whisper: OpenAIWhisperBackendOptions = Field(default_factory=OpenAIWhisperBackendOptions)
     faster_whisper: FasterWhisperBackendOptions = Field(default_factory=FasterWhisperBackendOptions)
+    lemonade: LemonadeBackendOptions = Field(default_factory=LemonadeBackendOptions)
 
 
 class RuntimeConfig(BaseModel):

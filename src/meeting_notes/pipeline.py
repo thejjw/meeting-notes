@@ -17,7 +17,7 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from meeting_notes.audio.inspect import inspect_media
 from meeting_notes.audio.normalize import create_normalized_path, normalize_audio
-from meeting_notes.asr.registry import get_backend
+from meeting_notes.asr.registry import get_backend, get_configured_backend
 from meeting_notes.config import MeetingNotesConfig, load_config
 from meeting_notes.errors import (
     ConfigurationError,
@@ -173,34 +173,28 @@ def _asr_remediation(
 
 
 def _check_asr_readiness(config: MeetingNotesConfig, config_path: str | None) -> None:
-    """Fail before audio preparation with complete whisper.cpp remediation."""
-    if config.runtime.asr_backend != "whisper_cpp":
+    """Fail before audio preparation with backend-specific remediation."""
+    configured = get_configured_backend(config)
+    readiness = configured.check_readiness()
+    if readiness.available:
         return
-    backend = get_backend("whisper_cpp", executable=config.runtime.whisper_cpp_path)
-    runtime_ready = backend.is_available()
-    model_ready = False
-    model_detail = "model_path is not configured"
-    if config.asr.model_path:
-        from meeting_notes.models import verify_model
-
-        try:
-            model_ready, model_detail = verify_model(config.asr.model, Path(config.asr.model_path))
-        except RuntimeError:
-            model_ready = Path(config.asr.model_path).is_file()
-            model_detail = "present" if model_ready else "missing"
-    if runtime_ready and model_ready:
-        return
-    if not runtime_ready:
+    console.print(f"[red]Configured ASR backend is unavailable:[/red] {readiness.detail}")
+    if config.runtime.asr_backend == "lemonade":
+        options = config.asr.backend_options.lemonade
+        active_config = _active_config_path(config_path)
         console.print(
-            f"[red]Configured whisper.cpp executable is unavailable:[/red] "
-            f"{config.runtime.whisper_cpp_path}"
+            "\n[bold]How to finish setup[/bold]\n"
+            f"  Configured URL: {options.base_url}\n"
+            "  Start Lemonade Server manually, then verify it with:\n"
+            "    lemonade status\n"
+            "  If the model is not downloaded, run:\n"
+            "    uv run meeting-notes models download "
+            f'{config.asr.model} --config "{active_config}" --yes\n'
+            "  Then verify:\n"
+            f'    uv run meeting-notes doctor --config "{active_config}"'
         )
-    if not model_ready:
-        console.print(
-            f"[red]Configured Whisper model is unavailable:[/red] "
-            f"{config.asr.model} ({model_detail})"
-        )
-    console.print(_asr_remediation(config, config_path, runtime_ready=runtime_ready))
+    elif config.runtime.asr_backend == "whisper_cpp":
+        console.print(_asr_remediation(config, config_path, runtime_ready=False))
     raise typer.Exit(1)
 
 
@@ -452,81 +446,32 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
         if not normalized.exists():
             raise FileNotFoundError(f"Normalized audio not found: {normalized}")
 
-        # Get ASR backend (only pass executable for whisper_cpp)
-        backend_kwargs = {}
-        if config.runtime.asr_backend == "whisper_cpp":
-            backend_kwargs["executable"] = config.runtime.whisper_cpp_path
-            from meeting_notes.runtime import find_manifest_for_executable
-
-            executable = Path(config.runtime.whisper_cpp_path).resolve()
-            runtime_manifest = find_manifest_for_executable(executable)
-            runtime_identity = {
-                "backend": "whisper_cpp",
-                "device": config.runtime.device,
-                "executable": str(executable),
-                "managed": runtime_manifest is not None,
-                "runtime_version": (runtime_manifest.get("version") if runtime_manifest else None),
-                "runtime_backend": (runtime_manifest.get("backend") if runtime_manifest else None),
-                "source_revision": (
-                    runtime_manifest.get("source_revision") if runtime_manifest else None
-                ),
-                "model": config.asr.model,
-                "model_path": config.asr.model_path,
-            }
-            log.info("asr.runtime_selected", **runtime_identity)
-        else:
-            runtime_identity = {
-                "backend": config.runtime.asr_backend,
-                "device": config.runtime.device,
-                "model": config.asr.model,
-                "model_path": config.asr.model_path,
-            }
+        configured = get_configured_backend(config)
+        backend = configured.backend
+        runtime_identity = configured.runtime_identity
         manifest["stages"]["transcribe"]["runtime"] = runtime_identity
+        log.info("asr.runtime_selected", **runtime_identity)
 
-        backend = get_backend(config.runtime.asr_backend, **backend_kwargs)
+        readiness = configured.check_readiness()
+        if not readiness.available:
+            raise DependencyMissingError(readiness.detail)
 
-        if not backend.is_available():
-            raise DependencyMissingError(
-                f"ASR backend '{config.runtime.asr_backend}' is not available."
-            )
-
-        # Resolve the configured automatic CPU thread policy. whisper-cli's
-        # own default is only four threads, which underuses modern CPUs.
-        threads = config.runtime.threads
-        if config.runtime.asr_backend == "whisper_cpp":
-            threads = _resolve_whisper_threads(config)
         if config.runtime.asr_backend == "whisper_cpp" and config.runtime.threads <= 0:
             log.info(
                 "whisper_cpp.threads_auto_selected",
-                threads=threads,
+                threads=configured.transcribe_kwargs["threads"],
                 logical_cores=os.cpu_count() or 1,
             )
 
-        # Run transcription
-        transcribe_kwargs = {
-            "model": config.asr.model,
-            "model_path": Path(config.asr.model_path) if config.asr.model_path else None,
-            "language": config.asr.language,
-            "task": config.asr.task,
-            "initial_prompt": config.asr.initial_prompt,
-            "word_timestamps": config.asr.word_timestamps,
-            "threads": threads,
-        }
-        if config.runtime.asr_backend == "whisper_cpp":
-            whisper_options = config.asr.backend_options.whisper_cpp
-            transcribe_kwargs.update(
-                {
-                    "device": config.runtime.device,
-                    "model_variant": whisper_options.model_variant,
-                    "flash_attention": whisper_options.flash_attention,
-                    "extra_args": whisper_options.extra_args,
-                    "gpu_device": whisper_options.gpu_device,
-                }
-            )
         result = backend.transcribe(
             normalized,
-            **transcribe_kwargs,
+            **configured.transcribe_kwargs,
         )
+        runtime_identity["backend"] = result.backend
+        runtime_identity["device"] = result.device
+        if result.raw_output.get("server_version"):
+            runtime_identity["server_version"] = result.raw_output["server_version"]
+        manifest["stages"]["transcribe"]["runtime"] = runtime_identity
 
         # Use duration from manifest if available, else estimate
         if "duration_seconds" in manifest.get("source", {}):
@@ -552,14 +497,9 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
 
 def _resolve_whisper_threads(config: MeetingNotesConfig) -> int:
     """Resolve zero/automatic thread configuration for whisper.cpp."""
-    if config.runtime.threads > 0:
-        return config.runtime.threads
+    from meeting_notes.asr.registry import _resolve_whisper_threads as resolve
 
-    logical_cores = os.cpu_count() or 1
-    threads = max(1, logical_cores - config.runtime.reserve_logical_cores)
-    if config.runtime.max_auto_threads > 0:
-        threads = min(threads, config.runtime.max_auto_threads)
-    return threads
+    return resolve(config)
 
 
 def _module_available(module_name: str) -> bool:
