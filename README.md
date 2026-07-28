@@ -45,6 +45,112 @@ The first run with a given configuration has no history to draw on, so it prints
 "no timing history yet" instead of a guess; every completed run afterward improves
 the estimate for next time.
 
+## Complete Reviewed Workflow
+
+The quick-start command produces usable automated output. For a reviewed result,
+use the following workflow to identify speakers, resolve the AI's open questions,
+and retain only the final human-facing files.
+
+### 1. Process the recording
+
+This example uses a Korean filename with spaces:
+
+```powershell
+$recording = 'C:\Users\user\Downloads\음성 19800101_1.m4a'
+uv run meeting-notes process "$recording"
+```
+
+At completion, the command prints a line like:
+
+```text
+Pipeline complete. Job: data\meetings\2026-07-28--807b1c9b1dac39f9
+```
+
+Copy the exact printed path into `$job`, resolving it from the directory where
+you ran `meeting-notes` when it is relative:
+
+```powershell
+$job = 'C:\path\to\meeting-notes\data\meetings\2026-07-28--807b1c9b1dac39f9'
+```
+
+Do not guess the job directory from the recording name. The directory name also
+depends on recording metadata and a content-derived hash.
+
+### 2. Correct speaker names
+
+Open `$job\speakers.yaml`, identify each speaker from the included timestamps and
+example utterances, and fill in the `name` values. Then apply the mapping:
+
+```powershell
+uv run meeting-notes speakers apply "$job" --map "$job\speakers.yaml"
+```
+
+Review the newly published `*_meeting-notes.md` and `*_transcript.md` under
+`$job\output\finalized\<generation>\`. If a name is wrong, edit the YAML and
+apply it again. See [Correct Speaker Names](#correct-speaker-names) for the YAML
+format and diarization requirements.
+
+### 3. Resolve the initial clarifications
+
+Create the first answer sheet:
+
+```powershell
+uv run meeting-notes clarify template "$job"
+```
+
+Open `$job\clarifications.yaml`, fill in the relevant `answer:` fields or add
+general guidance under `comments:`, and publish the corrections:
+
+```powershell
+uv run meeting-notes clarify apply "$job"
+```
+
+Review the newly published meeting notes and transcript again.
+
+### 4. Repeat clarification review until clear
+
+An apply can correct the transcript and produce a new summary with new or
+remaining questions. Regenerate the answer sheet against the current transcript:
+
+```powershell
+uv run meeting-notes clarify template "$job" --force
+```
+
+`--force` backs up the previous sidecar and preserves existing answers and
+comments. If the command reports `No open clarifications found for this job.`,
+the loop is complete. Otherwise, review `$job\clarifications.yaml`, fill in the
+new or remaining answers, and apply again:
+
+```powershell
+uv run meeting-notes clarify apply "$job"
+```
+
+Repeat the regenerate, review, and apply cycle until there are no open questions
+and the latest meeting notes and transcript pass human review. See
+[User Feedback & Terminology Refinement](#user-feedback--terminology-refinement)
+for the clarification fields and correction behavior.
+
+### 5. Retain only the final files
+
+Final-only cleanup is irreversible because it removes the manifest, editable
+sidecars, JSON, subtitles, and all regeneration artifacts. Preview the exact
+selection first:
+
+```powershell
+uv run meeting-notes clean "$job" --final-only --dry-run
+```
+
+After verifying that the preview retains the correct recording, meeting notes,
+and transcript, perform the cleanup:
+
+```powershell
+uv run meeting-notes clean "$job" --final-only --yes
+```
+
+The job directory now contains exactly those three files. See
+[Data Footprint and Cleanup](#data-footprint-and-cleanup) for other cleanup
+choices.
+
 ## Output Files
 
 Each successful publication receives a generation directory. Its root stays
@@ -118,13 +224,75 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes process FILE --dry-run` | Show plan without running |
 | `meeting-notes process FILE --from summarize` | Resume from specific stage |
 | `meeting-notes process FILE --force-stage transcribe` | Re-run a specific stage |
+| `meeting-notes speakers template JOB_DIR` | Create or locate the editable `speakers.yaml` map |
+| `meeting-notes speakers apply JOB_DIR` | Apply speaker names, re-summarize, and publish |
 | `meeting-notes clarify template JOB_DIR` | Create an editable `clarifications.yaml` from open AI questions |
 | `meeting-notes clarify apply JOB_DIR` | Apply answers: correct glossary & transcript, re-summarize, publish |
+| `meeting-notes clean JOB_DIR --final-only` | Retain only the final recording, meeting notes, and transcript |
 | `meeting-notes glossary promote JOB_DIR` | Promote a job's glossary terms into the global glossary |
 | `meeting-notes doctor` | Check environment and tools |
 | `meeting-notes config show` | Show current configuration |
 | `meeting-notes models list` | List available Whisper models |
 | `meeting-notes resources show` | Show memory estimates |
+
+## Correct Speaker Names
+
+Speaker names can be corrected when diarization is enabled and produced stable
+speaker IDs such as `SPEAKER_00`. The automated pipeline normally creates
+`JOB_DIR\speakers.yaml` after merging the diarization results. This command
+creates or locates it explicitly:
+
+```powershell
+uv run meeting-notes speakers template "$job"
+```
+
+If the command reports that no stable diarization speaker labels were found,
+there are no speaker IDs to map. Configure diarization and rerun from that stage,
+as described in [Speaker Diarization](#speaker-diarization), or publish without
+speaker attribution:
+
+```powershell
+uv run meeting-notes speakers apply "$job" --without-diarization
+```
+
+For a diarized job, each entry in `speakers.yaml` includes timestamps, segment
+IDs, example utterances, and speaking-time statistics. Use that evidence to
+identify the person, then edit only the `name` value:
+
+```yaml
+speakers:
+  SPEAKER_00:
+    name: '김민수'
+    segment_count: 58
+    total_seconds: 134.5
+    examples:
+      - timestamp: 00:38:20
+        segment_id: seg-001053
+        text: 이 연동에 대한 스펙을 잡아놓고 있는데
+  SPEAKER_01:
+    name: ''
+    segment_count: 12
+    total_seconds: 22.2
+    examples:
+      - timestamp: 00:00:23
+        segment_id: seg-000007
+        text: 설계서도 한번 주신 거 있잖아요.
+```
+
+Leave an unknown speaker's name empty. Do not change the `SPEAKER_*` keys,
+transcript fingerprint, examples, segment counts, or timestamps. Save the file
+as UTF-8, then apply it:
+
+```powershell
+uv run meeting-notes speakers apply "$job" --map "$job\speakers.yaml"
+```
+
+This does not rerun transcription or diarization. It reuses the merged transcript,
+renders named transcript variants, re-summarizes with the mapped participants,
+and publishes a new generation under `output\finalized\`. Previous generations
+remain available for comparison. To correct another name, edit the same sidecar,
+apply again, and review the newest generation before starting clarification
+review.
 
 ## User Feedback & Terminology Refinement
 
@@ -161,6 +329,21 @@ Automatic Speech Recognition (ASR) may mishear technical terms or leave action i
    ```
 
    For general guidance that isn't tied to one flagged item — a hint, a preference, a "when unsure, assume X" — add free-text lines under `comments:` instead (duplicate the entry to add more). Unlike an `answer:`, a comment is never used for exact-match glossary substitution; it's passed to the re-summarization model as steering context only. Comments are preserved across `clarify template --force` regenerations, same as answers.
+
+3. **Review the new publication and repeat until clear**:
+   ```bash
+   uv run meeting-notes clarify template JOB_DIR --force
+   ```
+   Applying answers may correct the transcript and create a new summary with new
+   or remaining questions. The next template must be regenerated against that
+   current transcript. `--force` backs up the previous `clarifications.yaml` and
+   preserves its existing answers and comments. If there are still open
+   questions, review the regenerated sidecar and apply it again:
+   ```bash
+   uv run meeting-notes clarify apply JOB_DIR
+   ```
+   Stop when `clarify template --force` reports that no open clarifications were
+   found and the latest meeting notes and transcript pass human review.
 
 ### What Happens:
 - **Job-scoped glossary**: `asr_correction`/`term_clarification` answers (e.g. `아르고 시디` -> `ArgoCD`) are saved to `JOB_DIR/glossary.yaml`, scoped to this recording only — not the shared global glossary. `missing_info` answers (owners, dates) are never added to any glossary. `comments:` entries are never added to any glossary.
@@ -526,6 +709,8 @@ uv run meeting-notes clean JOB_DIR --final-only
 uv run meeting-notes clean JOB_DIR --yes
 ```
 
+Run final-only cleanup only after completing the
+[speaker and clarification review workflow](#complete-reviewed-workflow).
 For speakerless jobs, replace `--map ...` with `--without-diarization`. Review
 the job directory before cleanup. `clean --final-only` selects the newest active
 pipeline, speaker-name, or clarification publication, verifies the three retained
