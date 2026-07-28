@@ -375,7 +375,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     )
 
     # Preview and confirm
-    console.print(f"\n[bold]Resolved configuration[/bold]\n")
+    console.print("\n[bold]Resolved configuration[/bold]\n")
     console.print(f"  Profile: {config.setup.profile}")
     console.print(f"  Backend: {config.runtime.asr_backend}")
     console.print(f"  Device: {config.runtime.device}")
@@ -646,7 +646,7 @@ def show_config(resolved: bool = False, config_path: str | None = None) -> None:
     if resolved:
         console.print_json(config.model_dump_json(indent=2))
     else:
-        from meeting_notes.config import DEFAULT_CONFIG_PATH, _resolve_config_path
+        from meeting_notes.config import _resolve_config_path
 
         path = _resolve_config_path(config_path)
         console.print(f"Config path: {path}")
@@ -676,7 +676,7 @@ def config_status_cmd(config_path: str | None = None) -> None:
 
 def config_edit_cmd(config_path: str | None = None) -> None:
     """Open configuration file in editor."""
-    from meeting_notes.config import DEFAULT_CONFIG_PATH, _resolve_config_path
+    from meeting_notes.config import _resolve_config_path
 
     path = _resolve_config_path(config_path)
     if not path:

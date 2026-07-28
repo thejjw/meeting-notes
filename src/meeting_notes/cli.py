@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import sys
-from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 import typer
 from rich.console import Console
@@ -41,7 +39,7 @@ def main(
 @app.command()
 def configure(
     config_path: Annotated[
-        Optional[str], typer.Option("--config", help="Config file path.")
+        str | None, typer.Option("--config", help="Config file path.")
     ] = None,
     accept_defaults: Annotated[
         bool, typer.Option("--accept-defaults", help="Non-interactive safe CPU defaults.")
@@ -84,7 +82,7 @@ def config_show(
     resolved: Annotated[
         bool, typer.Option("--resolved", help="Show fully resolved configuration.")
     ] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Show current configuration."""
     from meeting_notes.configure import show_config
@@ -94,7 +92,7 @@ def config_show(
 
 @config_app.command("status")
 def config_status(
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Show configuration status."""
     from meeting_notes.configure import config_status_cmd
@@ -104,7 +102,7 @@ def config_status(
 
 @config_app.command("edit")
 def config_edit(
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Open configuration file in editor."""
     from meeting_notes.configure import config_edit_cmd
@@ -114,7 +112,7 @@ def config_edit(
 
 @config_app.command("reset")
 def config_reset(
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Reset configuration to safe defaults."""
     from meeting_notes.configure import config_reset_cmd
@@ -130,7 +128,7 @@ def doctor(
     output_json: Annotated[
         bool, typer.Option("--json", help="Output as JSON.")
     ] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
     smoke_test: Annotated[
         bool, typer.Option("--smoke-test", help="Load the configured model using a generated WAV.")
     ] = False,
@@ -150,8 +148,8 @@ app.add_typer(resources_app, name="resources")
 
 @resources_app.command("show")
 def resources_show(
-    model: Annotated[Optional[str], typer.Option("--model")] = None,
-    device: Annotated[Optional[str], typer.Option("--device")] = None,
+    model: Annotated[str | None, typer.Option("--model")] = None,
+    device: Annotated[str | None, typer.Option("--device")] = None,
 ) -> None:
     """Show resource estimates and system capabilities."""
     from meeting_notes.configure import run_resources_show
@@ -200,7 +198,7 @@ def models_download(
     model: Annotated[str, typer.Argument(help="Model name.")],
     backend: Annotated[str, typer.Option("--backend")] = "auto",
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Download a model."""
     from meeting_notes.configure import run_models_download
@@ -212,7 +210,7 @@ def models_download(
 def models_verify(
     model: Annotated[str, typer.Argument(help="Model name.")],
     backend: Annotated[str, typer.Option("--backend")] = "whisper_cpp",
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Verify a downloaded model."""
     from meeting_notes.configure import run_models_verify
@@ -241,7 +239,7 @@ def runtime_status(
 def runtime_install(
     device: Annotated[str, typer.Option("--device", help="cpu or vulkan")] = "cpu",
     version: Annotated[str, typer.Option("--version")] = "v1.9.1",
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
 ) -> None:
     """Install a verified CPU runtime or build a Vulkan runtime."""
@@ -259,7 +257,7 @@ app.add_typer(diarization_app, name="diarization")
 
 @diarization_app.command("setup")
 def diarization_setup(
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm model download.")] = False,
     force: Annotated[
         bool, typer.Option("--force", help="Redownload an existing managed pipeline.")
@@ -281,16 +279,16 @@ def diarization_setup(
 @app.command()
 def process(
     input_file: Annotated[str, typer.Argument(help="Path to audio/video file.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
-    profile: Annotated[Optional[str], typer.Option("--profile")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+    profile: Annotated[str | None, typer.Option("--profile")] = None,
     dry_run: Annotated[
         bool, typer.Option("--dry-run", help="Show plan without executing.")
     ] = False,
     resume: Annotated[
         bool, typer.Option("--resume/--no-resume", help="Resume from existing job.")
     ] = True,
-    from_stage: Annotated[Optional[str], typer.Option("--from")] = None,
-    force_stage: Annotated[Optional[str], typer.Option("--force-stage")] = None,
+    from_stage: Annotated[str | None, typer.Option("--from")] = None,
+    force_stage: Annotated[str | None, typer.Option("--force-stage")] = None,
     finalize_names: Annotated[
         bool, typer.Option("--finalize-names/--no-finalize-names")
     ] = True,
@@ -324,7 +322,7 @@ def process(
 @app.command()
 def prepare(
     input_file: Annotated[str, typer.Argument(help="Path to audio/video file.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Inspect source and normalize audio."""
     from meeting_notes.pipeline import run_prepare
@@ -335,7 +333,7 @@ def prepare(
 @app.command()
 def transcribe(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Run ASR transcription on normalized audio."""
     from meeting_notes.pipeline import run_transcribe
@@ -346,7 +344,7 @@ def transcribe(
 @app.command()
 def diarize(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Run speaker diarization."""
     from meeting_notes.pipeline import run_diarize
@@ -357,7 +355,7 @@ def diarize(
 @app.command()
 def merge(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Merge transcript and diarization."""
     from meeting_notes.pipeline import run_merge
@@ -368,7 +366,7 @@ def merge(
 @app.command()
 def summarize(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Run summarization."""
     from meeting_notes.pipeline import run_summarize
@@ -379,7 +377,7 @@ def summarize(
 @app.command()
 def render(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Render meeting minutes from summary."""
     from meeting_notes.pipeline import run_render
@@ -397,7 +395,7 @@ app.add_typer(naming_app, name="naming")
 @naming_app.command("preview")
 def naming_preview(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Preview finalized filenames."""
     from meeting_notes.pipeline import run_naming_preview
@@ -408,7 +406,7 @@ def naming_preview(
 @naming_app.command("finalize")
 def naming_finalize(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Finalize recording and note filenames."""
     from meeting_notes.pipeline import run_naming_finalize
@@ -425,9 +423,9 @@ app.add_typer(speakers_app, name="speakers")
 @speakers_app.command("template")
 def speakers_template(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    output: Annotated[Optional[str], typer.Option("--output", help="Template output path.")] = None,
+    output: Annotated[str | None, typer.Option("--output", help="Template output path.")] = None,
     force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Create an editable speaker identification template."""
     del config_path  # Reserved for consistent command configuration.
@@ -443,7 +441,7 @@ def speakers_template(
 @speakers_app.command("apply")
 def speakers_apply(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    map_path: Annotated[Optional[str], typer.Option("--map", help="Speaker map path.")] = None,
+    map_path: Annotated[str | None, typer.Option("--map", help="Speaker map path.")] = None,
     cleanup: Annotated[bool, typer.Option("--cleanup", help="Remove tracked superseded publications.")] = False,
     cleanup_all: Annotated[bool, typer.Option("--cleanup-all", help="Also remove reproducible upstream artifacts.")] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm cleanup.")] = False,
@@ -455,7 +453,7 @@ def speakers_apply(
             help="Remove speaker attribution and regenerate downstream outputs.",
         ),
     ] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Apply speaker names without rerunning transcription or diarization."""
     if cleanup and cleanup_all:
@@ -486,7 +484,7 @@ app.add_typer(clarify_app, name="clarify")
 @clarify_app.command("template")
 def clarify_template(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    output: Annotated[Optional[str], typer.Option("--output", help="Template output path.")] = None,
+    output: Annotated[str | None, typer.Option("--output", help="Template output path.")] = None,
     force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
 ) -> None:
     """Create an editable clarifications.yaml with the AI's open questions."""
@@ -502,9 +500,9 @@ def clarify_template(
 @clarify_app.command("apply")
 def clarify_apply(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    answers: Annotated[Optional[str], typer.Option("--answers", help="Clarifications file path.")] = None,
+    answers: Annotated[str | None, typer.Option("--answers", help="Clarifications file path.")] = None,
     local_only: Annotated[bool, typer.Option("--local-only", help="Reject remote summarizers.")] = False,
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Apply answered clarifications: correct the job glossary and transcript,
     then re-summarize with the confirmed answers as context and publish a new
@@ -525,7 +523,7 @@ app.add_typer(glossary_app, name="glossary")
 @glossary_app.command("promote")
 def glossary_promote(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Promote a job's glossary terms into the global glossary."""
     from meeting_notes.clarifications import command_promote
@@ -539,7 +537,7 @@ app.add_typer(summarizers_app, name="summarizers")
 
 @summarizers_app.command("test")
 def summarizers_test(
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
     output_json: Annotated[bool, typer.Option("--json", help="Output JSON.")] = False,
 ) -> None:
     """Run a small schema-validated request without publishing files."""
@@ -559,7 +557,7 @@ def summarizers_test(
 def benchmark(
     input_file: Annotated[str, typer.Argument(help="Path to audio/video file.")],
     matrix: Annotated[str, typer.Option("--matrix", help="Benchmark matrix YAML.")] = "config/benchmark-matrix.yaml",
-    config_path: Annotated[Optional[str], typer.Option("--config")] = None,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Run benchmark comparing configurations."""
     from meeting_notes.pipeline import run_benchmark
@@ -573,7 +571,7 @@ def benchmark(
 @app.command()
 def clean(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    stage: Annotated[Optional[str], typer.Option("--stage")] = None,
+    stage: Annotated[str | None, typer.Option("--stage")] = None,
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
 ) -> None:
     """Clean job artifacts."""

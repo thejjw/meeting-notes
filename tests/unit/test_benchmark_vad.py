@@ -5,14 +5,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from meeting_notes.benchmark.runner import (
     BenchmarkRun,
     load_benchmark_matrix,
     render_benchmark_report,
 )
-from meeting_notes.vad.base import VADBackend, VADSegment
+from meeting_notes.vad.base import VADSegment
 from meeting_notes.vad.none import NoVADBackend
 
 

@@ -42,8 +42,8 @@ class SileroVADBackend(VADBackend):
             model_path = self._model_path
             if not model_path:
                 # Try to find or download the model
-                from pathlib import Path
                 import urllib.request
+                from pathlib import Path
 
                 cache_dir = Path.home() / ".cache" / "silero-vad"
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +73,7 @@ class SileroVADBackend(VADBackend):
     ) -> list[VADSegment]:
         """Detect speech segments using Silero VAD."""
         import wave
+
         import numpy as np
 
         self._load_model()

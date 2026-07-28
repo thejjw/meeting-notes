@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from meeting_notes.transcript.merge import _deduplicate_overlap, _text_similarity, merge_chunk_transcripts
+from meeting_notes.transcript.merge import (
+    _deduplicate_overlap,
+    _text_similarity,
+    merge_chunk_transcripts,
+)
 from meeting_notes.transcript.models import TranscriptDocument, TranscriptSegment
 
 

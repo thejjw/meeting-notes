@@ -293,9 +293,8 @@ def test_enabled_unavailable_diarization_fails_instead_of_silently_skipping(
     with patch(
         "meeting_notes.diarization.pyannote.PyannoteDiarizationBackend.is_available",
         return_value=False,
-    ):
-        with pytest.raises(DiarizationUnavailableError):
-            _run_diarize(tmp_path, manifest, config)
+    ), pytest.raises(DiarizationUnavailableError):
+        _run_diarize(tmp_path, manifest, config)
 
     assert manifest["stages"]["diarize"]["status"] == "failed"
 

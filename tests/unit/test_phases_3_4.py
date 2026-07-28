@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from meeting_notes.audio.chunk import (
     AudioChunk,
     compute_chunks,
     load_chunks_manifest,
     save_chunks_manifest,
+)
+from meeting_notes.diarization.base import DiarizationTurn
+from meeting_notes.diarization.reconcile import (
+    apply_speaker_map,
+    assign_speakers,
+    load_speaker_map,
 )
 from meeting_notes.transcript.glossary import (
     Glossary,
@@ -19,13 +23,7 @@ from meeting_notes.transcript.glossary import (
     build_initial_prompt,
     load_glossary,
 )
-from meeting_notes.diarization.reconcile import (
-    apply_speaker_map,
-    assign_speakers,
-    load_speaker_map,
-)
 from meeting_notes.transcript.models import TranscriptSegment
-from meeting_notes.diarization.base import DiarizationTurn
 from meeting_notes.vad.none import NoVADBackend
 
 

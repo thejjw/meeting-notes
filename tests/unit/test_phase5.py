@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from meeting_notes.minutes.render import render_minutes, save_minutes
+from meeting_notes.minutes.render import render_minutes
 from meeting_notes.naming import (
     generate_filenames,
     resolve_collision,

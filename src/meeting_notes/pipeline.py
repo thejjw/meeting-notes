@@ -375,7 +375,7 @@ def _print_dry_run(
     console.print(f"  Summarization: {'enabled' if config.summarization.enabled else 'disabled'}")
     console.print(f"\n  Source: {source}")
     console.print(f"  Job dir: {job_dir}")
-    console.print(f"\n[bold]Planned stages:[/bold]")
+    console.print("\n[bold]Planned stages:[/bold]")
     for i, stage in enumerate(stages, 1):
         console.print(f"  [{i}/{len(stages)}] {stage}")
 
@@ -838,11 +838,12 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
         # over the global glossary so corrections stay scoped to this
         # recording unless explicitly promoted (`meeting-notes glossary promote`).
         if config.glossary.enabled:
+            from pathlib import Path as P
+
             from meeting_notes.transcript.glossary import (
                 correct_transcript_segments,
                 load_layered_glossary,
             )
-            from pathlib import Path as P
 
             global_path = P(config.glossary.path) if config.glossary.path else None
             job_glossary_path = job_dir / "glossary.yaml"
@@ -1026,6 +1027,7 @@ def _run_summarize(
     update_stage_status(manifest, "summarize", "running")
     try:
         import json
+
         from meeting_notes.summarization.adapters import summarizer_provenance
 
         # Load transcript text
@@ -1125,8 +1127,8 @@ def _run_render(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> di
     update_stage_status(manifest, "render", "running")
     try:
         import json
+
         from meeting_notes.minutes.render import render_minutes, save_minutes
-        from meeting_notes.audio.inspect import MediaInfo
 
         markdown_summary = job_dir / "summary" / "summary.md"
         summary_path = job_dir / "summary" / "summary.json"
@@ -1189,6 +1191,7 @@ def _run_finalize(
     generation = job_dir / "output" / "finalized" / run_id
     try:
         import json
+
         from meeting_notes.naming import (
             generate_filenames,
             resolve_date,
@@ -1367,7 +1370,7 @@ def run_transcribe(job_dir: str, config_path: str | None = None) -> None:
     manifest = load_manifest(Path(job_dir))
     manifest = _run_transcribe(Path(job_dir), manifest, config)
     save_manifest(Path(job_dir), manifest)
-    console.print(f"[green]Transcribe complete.[/green]")
+    console.print("[green]Transcribe complete.[/green]")
 
 
 def run_diarize(job_dir: str, config_path: str | None = None) -> None:
@@ -1412,7 +1415,7 @@ def run_render(job_dir: str, config_path: str | None = None) -> None:
 
 def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
     """Preview finalized filenames."""
-    from meeting_notes.naming import generate_filenames, sanitize_short_title, resolve_date
+    from meeting_notes.naming import generate_filenames, resolve_date, sanitize_short_title
 
     config = _load_or_fail(config_path)
     job_path = Path(job_dir)
@@ -1444,7 +1447,7 @@ def run_naming_preview(job_dir: str, config_path: str | None = None) -> None:
         transcript_vtt_template=config.naming.transcript_vtt_template,
     )
 
-    console.print(f"\n[bold]Filename preview[/bold]")
+    console.print("\n[bold]Filename preview[/bold]")
     console.print(f"  Date source: {date_source}")
     console.print(f"  Date: {date}")
     console.print(f"  Short title: {short_title}")
@@ -1490,7 +1493,7 @@ def run_benchmark(input_file: str, matrix: str, config_path: str | None = None) 
     output_dir = Path("data") / "benchmarks" / source.stem
     output_paths = render_benchmark_report(results, output_dir)
 
-    console.print(f"\n[green]Benchmark complete.[/green]")
+    console.print("\n[green]Benchmark complete.[/green]")
     for fmt, path in output_paths.items():
         console.print(f"  {fmt}: {path}")
 
@@ -1516,4 +1519,4 @@ def run_clean(job_dir: str, stage: str | None = None, yes: bool = False) -> None
             dir_path = job_path / d
             if dir_path.exists():
                 shutil.rmtree(dir_path)
-        console.print(f"[green]Cleaned all artifacts[/green]")
+        console.print("[green]Cleaned all artifacts[/green]")

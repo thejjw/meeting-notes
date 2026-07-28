@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import os
 import tempfile
-import time
 from pathlib import Path
 from typing import Any, Literal
 
@@ -453,8 +452,8 @@ def load_config(explicit_path: str | None = None) -> MeetingNotesConfig:
     path = _resolve_config_path(explicit_path)
     if path is None:
         raise ConfigNotFoundError(
-            f"No valid configuration found. Run 'meeting-notes configure' to create one, "
-            f"or use '--accept-defaults' for a safe CPU-only setup."
+            "No valid configuration found. Run 'meeting-notes configure' to create one, "
+            "or use '--accept-defaults' for a safe CPU-only setup."
         )
 
     try:

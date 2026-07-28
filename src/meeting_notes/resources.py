@@ -6,7 +6,6 @@ import os
 import platform
 import subprocess
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import psutil
@@ -492,7 +491,7 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
         f"{diag.memory.available_ram_gb:.1f} GiB currently available"
     )
     if diag.memory.is_unified_memory:
-        lines.append(f"  Memory type: Unified (RAM and VRAM are the same pool)")
+        lines.append("  Memory type: Unified (RAM and VRAM are the same pool)")
 
     # GPU
     if diag.gpu.cuda_available:
@@ -501,21 +500,21 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
         dev_names = ", ".join(d.get("name", "?") for d in diag.gpu.vulkan_devices)
         lines.append(f"  Vulkan: available, {dev_names}")
     else:
-        lines.append(f"  Vulkan: not available in this environment")
+        lines.append("  Vulkan: not available in this environment")
 
     if diag.gpu.rocm_architectures:
         lines.append(
             f"  ROCm/HIP: detected architectures: {', '.join(diag.gpu.rocm_architectures)}"
         )
     else:
-        lines.append(f"  ROCm/HIP: not available in this environment")
+        lines.append("  ROCm/HIP: not available in this environment")
 
     if (
         not diag.gpu.cuda_available
         and not diag.gpu.vulkan_devices
         and not diag.gpu.rocm_architectures
     ):
-        lines.append(f"  CUDA: not available")
+        lines.append("  CUDA: not available")
 
     # Tools
     lines.append("")

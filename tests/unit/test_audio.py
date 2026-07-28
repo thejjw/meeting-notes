@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import struct
 import wave
 from pathlib import Path
 

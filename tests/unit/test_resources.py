@@ -2,11 +2,8 @@
 
 from __future__ import annotations
 
-import pytest
-
 from meeting_notes.resources import (
     WHISPER_CPP_RESOURCES,
-    ResourceEstimate,
     check_model_fit,
     detect_system,
     format_diagnostics_table,
