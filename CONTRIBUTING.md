@@ -31,6 +31,15 @@ uv run --extra all pyright
 - `prompts/` - Summarization prompts
 - `schemas/` - JSON schemas
 
+## Python Version Requirement (`==3.12.*`)
+
+The project strictly pins Python to `3.12.x` in `pyproject.toml` (`requires-python = "==3.12.*"`).
+
+### Rationale & Culprit Dependencies:
+- **Binary Wheel Availability:** Key ML and inference backends (`ctranslate2` for `faster-whisper`, `onnxruntime`, `pyannote.audio`, and PyTorch/`torchaudio`) distribute native C/C++/CUDA binaries tied to specific CPython ABI tags (`cp312`).
+- **Zero-Compiler Setup:** Newer CPython versions (Python 3.13+) currently lack pre-built wheels for dependencies like `ctranslate2`, forcing fallback to building from source (which fails on systems lacking Visual Studio C++ Build Tools or CUDA SDKs).
+- **Automatic Toolchain Management:** `uv` automatically downloads and isolates `cpython-3.12.x` inside `.venv`, allowing developers with higher host Python versions (e.g., Python 3.13/3.14) to build and run seamlessly without altering their system Python.
+
 ## Adding a New ASR Backend
 
 1. Create `src/meeting_notes/asr/your_backend.py`
