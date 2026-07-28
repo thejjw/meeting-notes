@@ -589,9 +589,34 @@ def benchmark(
 def clean(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
     stage: Annotated[str | None, typer.Option("--stage")] = None,
+    final_only: Annotated[
+        bool,
+        typer.Option(
+            "--final-only",
+            help="Keep only the final recording, meeting notes, and transcript.",
+        ),
+    ] = False,
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", help="Preview --final-only cleanup without changing files."),
+    ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
 ) -> None:
     """Clean job artifacts."""
+    from meeting_notes.cleanup import CleanupError, run_final_only_cleanup
     from meeting_notes.pipeline import run_clean
 
+    if final_only and stage:
+        console.print("[red]--final-only and --stage are mutually exclusive.[/red]")
+        raise typer.Exit(2)
+    if dry_run and not final_only:
+        console.print("[red]--dry-run requires --final-only.[/red]")
+        raise typer.Exit(2)
+    if final_only:
+        try:
+            run_final_only_cleanup(job_dir, yes=yes, dry_run=dry_run)
+        except CleanupError as error:
+            console.print(f"[red]{error}[/red]")
+            raise typer.Exit(1) from error
+        return
     run_clean(job_dir=job_dir, stage=stage, yes=yes)

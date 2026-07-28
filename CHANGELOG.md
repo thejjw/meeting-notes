@@ -5,6 +5,9 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `meeting-notes clean JOB_DIR --final-only` - preview and transactionally reduce a
+  completed job to its finalized recording, Markdown meeting notes, and Markdown
+  transcript; supports `--dry-run` and non-interactive `--yes`.
 - `meeting-notes clarify template` / `clarify apply` - review AI-generated clarification
   questions (ASR mishearings, missing owners/dates, ambiguous terms) via an editable
   `clarifications.yaml` sidecar, then apply confirmed answers: correct the per-job

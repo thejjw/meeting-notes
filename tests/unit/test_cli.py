@@ -38,6 +38,12 @@ class TestCLIBasic:
         result = runner.invoke(app, ["process", "--help"])
         assert result.exit_code == 0
 
+    def test_clean_help(self) -> None:
+        result = runner.invoke(app, ["clean", "--help"])
+        assert result.exit_code == 0
+        assert "--final-only" in result.output
+        assert "--dry-run" in result.output
+
     def test_models_help(self) -> None:
         result = runner.invoke(app, ["models", "--help"])
         assert result.exit_code == 0

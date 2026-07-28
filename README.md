@@ -515,14 +515,28 @@ uv run meeting-notes speakers apply JOB_DIR --map JOB_DIR/speakers.yaml --cleanu
 # normalized audio, raw ASR, diarization artifacts, and logs.
 uv run meeting-notes speakers apply JOB_DIR --map JOB_DIR/speakers.yaml --cleanup-all --yes
 
+# Preview a safe final cleanup that keeps exactly the published recording,
+# Markdown meeting notes, and Markdown transcript in the job root.
+uv run meeting-notes clean JOB_DIR --final-only --dry-run
+
+# Perform that final cleanup after showing the same preview and asking for confirmation.
+uv run meeting-notes clean JOB_DIR --final-only
+
 # Remove most derived data, including finalized output, while retaining source/.
 uv run meeting-notes clean JOB_DIR --yes
 ```
 
 For speakerless jobs, replace `--map ...` with `--without-diarization`. Review
-the job directory before cleanup. Deleting an entire individual job directory
-is the complete scrub for that meeting; never delete the shared `data/`
-directory unless every contained job is intentionally disposable.
+the job directory before cleanup. `clean --final-only` selects the newest active
+pipeline, speaker-name, or clarification publication, verifies the three retained
+files in a staging directory, and then replaces the job transactionally. Use
+`--yes` to skip its confirmation in automation. It intentionally removes the
+manifest, speaker map, JSON, subtitles, and regeneration artifacts, so later
+corrections require processing the retained recording again.
+
+Deleting an entire individual job directory is the complete scrub for that
+meeting; never delete the shared `data/` directory unless every contained job
+is intentionally disposable.
 
 ### Per-user application data
 
