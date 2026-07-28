@@ -217,23 +217,36 @@ original recording. Without that flag, the input directory is not modified.
 
 ## Commands
 
-| Command | What It Does |
-|---------|--------------|
+### High-Level Workflow
+| Command | Description |
+|---------|-------------|
 | `meeting-notes configure` | Interactive setup wizard |
-| `meeting-notes process FILE` | **Main command** — full pipeline |
-| `meeting-notes process FILE --dry-run` | Show plan without running |
-| `meeting-notes process FILE --from summarize` | Resume from specific stage |
-| `meeting-notes process FILE --force-stage transcribe` | Re-run a specific stage |
-| `meeting-notes speakers template JOB_DIR` | Create or locate the editable `speakers.yaml` map |
+| `meeting-notes process FILE` | **Main command** — full pipeline execution |
+| `meeting-notes process FILE --dry-run` | Show execution plan without running |
+| `meeting-notes process FILE --from STAGE` | Resume pipeline execution from a specific stage |
+| `meeting-notes process FILE --force-stage STAGE` | Re-run a specific stage |
+| `meeting-notes doctor` | Check environment, dependencies, and tool integrity |
+
+### Job Review & Refinement
+| Command | Description |
+|---------|-------------|
+| `meeting-notes speakers template JOB_DIR` | Create or locate editable `speakers.yaml` map |
 | `meeting-notes speakers apply JOB_DIR` | Apply speaker names, re-summarize, and publish |
-| `meeting-notes clarify template JOB_DIR` | Create an editable `clarifications.yaml` from open AI questions |
+| `meeting-notes clarify template JOB_DIR` | Create editable `clarifications.yaml` from open AI questions |
 | `meeting-notes clarify apply JOB_DIR` | Apply answers: correct glossary & transcript, re-summarize, publish |
-| `meeting-notes clean JOB_DIR --final-only` | Retain only the final recording, meeting notes, and transcript |
-| `meeting-notes glossary promote JOB_DIR` | Promote a job's glossary terms into the global glossary |
-| `meeting-notes doctor` | Check environment and tools |
-| `meeting-notes config show` | Show current configuration |
-| `meeting-notes models list` | List available Whisper models |
-| `meeting-notes resources show` | Show memory estimates |
+| `meeting-notes glossary promote JOB_DIR` | Promote job glossary terms into global `config/glossary.yaml` |
+| `meeting-notes clean JOB_DIR --final-only` | Transactionally retain only final recording, notes, and transcript |
+
+### Management & Diagnostics
+| Command | Description |
+|---------|-------------|
+| `meeting-notes config [show/status/edit/reset]` | Display, inspect, edit, or reset application configuration |
+| `meeting-notes models [list/status/info/download/verify]` | List, check, download, or verify Whisper model integrity |
+| `meeting-notes runtime [status/install]` | Check runtime status or install whisper.cpp CPU/Vulkan binaries |
+| `meeting-notes diarization setup` | Guided setup and download for pyannote speaker diarization |
+| `meeting-notes naming [preview/finalize]` | Preview or finalize output file naming |
+| `meeting-notes resources show` | Display memory and resource allocation estimates |
+| `meeting-notes summarizers test` | Test summarizer adapter configuration with a test prompt |
 
 ## Correct Speaker Names
 

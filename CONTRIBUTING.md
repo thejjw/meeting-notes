@@ -18,8 +18,8 @@ uv run pytest
 # Run linter
 uv run ruff check .
 
-# Run type checker
-uv run pyright
+# Run type checker (with optional dependencies)
+uv run --extra all pyright
 ```
 
 ## Project Structure
@@ -47,7 +47,7 @@ uv run pyright
 
 ## Code Style
 
-- Python 3.12+
+- Python 3.12 (strictly `==3.12.*`)
 - Type hints on all public functions
 - ruff for linting
 - pyright for type checking
