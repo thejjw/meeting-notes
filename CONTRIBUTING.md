@@ -33,6 +33,10 @@ uv run --extra all pyright
 
 ## Python Version Requirement (`==3.12.*`)
 
+> [!NOTE]
+> **Last Audited:** 2026-07-28  
+> Re-evaluate this constraint when PyPI publishes stable pre-compiled wheels for Python 3.13+ across `ctranslate2`, `faster-whisper`, `onnxruntime`, and `pyannote.audio`.
+
 The project strictly pins Python to `3.12.x` in `pyproject.toml` (`requires-python = "==3.12.*"`).
 
 ### Rationale & Culprit Dependencies:
