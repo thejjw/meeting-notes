@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
-from meeting_notes.asr.base import ASRResult
+if TYPE_CHECKING:
+    from pathlib import Path
+
+    from meeting_notes.asr.base import ASRResult
 
 
 def format_timestamp(seconds: float, fmt: str = "HH:MM:SS.mmm") -> str:

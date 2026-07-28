@@ -91,6 +91,22 @@ class TestConfigSaveAndLoad:
         temp_files = list(tmp_path.glob("*.tmp"))
         assert len(temp_files) == 0
 
+    def test_atomic_write_failure_preserves_error_and_cleans_temp(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config = MeetingNotesConfig(setup=SetupConfig(completed=True))
+
+        with (
+            patch("meeting_notes.config.os.replace", side_effect=OSError("replace failed")),
+            pytest.raises(OSError, match="replace failed"),
+        ):
+            save_config(config, config_path)
+
+        assert list(tmp_path.glob("*.tmp")) == []
+        assert not config_path.exists()
+
     def test_load_config_not_found(self, tmp_path: Path) -> None:
         with pytest.raises(ConfigNotFoundError):
             load_config(str(tmp_path / "nonexistent.yaml"))

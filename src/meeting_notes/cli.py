@@ -27,7 +27,14 @@ def _version_callback(value: bool) -> None:
 @app.callback()
 def main(
     version: Annotated[
-        bool, typer.Option("--version", "-V", callback=_version_callback, is_eager=True, help="Show version and exit.")
+        bool,
+        typer.Option(
+            "--version",
+            "-V",
+            callback=_version_callback,
+            is_eager=True,
+            help="Show version and exit.",
+        ),
     ] = False,
 ) -> None:
     """meeting-notes: Local-first meeting transcription and summarization."""
@@ -38,9 +45,7 @@ def main(
 
 @app.command()
 def configure(
-    config_path: Annotated[
-        str | None, typer.Option("--config", help="Config file path.")
-    ] = None,
+    config_path: Annotated[str | None, typer.Option("--config", help="Config file path.")] = None,
     accept_defaults: Annotated[
         bool, typer.Option("--accept-defaults", help="Non-interactive safe CPU defaults.")
     ] = False,
@@ -125,9 +130,7 @@ def config_reset(
 
 @app.command()
 def doctor(
-    output_json: Annotated[
-        bool, typer.Option("--json", help="Output as JSON.")
-    ] = False,
+    output_json: Annotated[bool, typer.Option("--json", help="Output as JSON.")] = False,
     config_path: Annotated[str | None, typer.Option("--config")] = None,
     smoke_test: Annotated[
         bool, typer.Option("--smoke-test", help="Load the configured model using a generated WAV.")
@@ -289,9 +292,7 @@ def process(
     ] = True,
     from_stage: Annotated[str | None, typer.Option("--from")] = None,
     force_stage: Annotated[str | None, typer.Option("--force-stage")] = None,
-    finalize_names: Annotated[
-        bool, typer.Option("--finalize-names/--no-finalize-names")
-    ] = True,
+    finalize_names: Annotated[bool, typer.Option("--finalize-names/--no-finalize-names")] = True,
     local_only: Annotated[
         bool, typer.Option("--local-only", help="Reject remote summarization adapters.")
     ] = False,
@@ -424,7 +425,9 @@ app.add_typer(speakers_app, name="speakers")
 def speakers_template(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
     output: Annotated[str | None, typer.Option("--output", help="Template output path.")] = None,
-    force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Regenerate and back up the old template.")
+    ] = False,
     config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Create an editable speaker identification template."""
@@ -442,10 +445,16 @@ def speakers_template(
 def speakers_apply(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
     map_path: Annotated[str | None, typer.Option("--map", help="Speaker map path.")] = None,
-    cleanup: Annotated[bool, typer.Option("--cleanup", help="Remove tracked superseded publications.")] = False,
-    cleanup_all: Annotated[bool, typer.Option("--cleanup-all", help="Also remove reproducible upstream artifacts.")] = False,
+    cleanup: Annotated[
+        bool, typer.Option("--cleanup", help="Remove tracked superseded publications.")
+    ] = False,
+    cleanup_all: Annotated[
+        bool, typer.Option("--cleanup-all", help="Also remove reproducible upstream artifacts.")
+    ] = False,
     yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm cleanup.")] = False,
-    local_only: Annotated[bool, typer.Option("--local-only", help="Reject remote summarizers.")] = False,
+    local_only: Annotated[
+        bool, typer.Option("--local-only", help="Reject remote summarizers.")
+    ] = False,
     without_diarization: Annotated[
         bool,
         typer.Option(
@@ -485,7 +494,9 @@ app.add_typer(clarify_app, name="clarify")
 def clarify_template(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
     output: Annotated[str | None, typer.Option("--output", help="Template output path.")] = None,
-    force: Annotated[bool, typer.Option("--force", help="Regenerate and back up the old template.")] = False,
+    force: Annotated[
+        bool, typer.Option("--force", help="Regenerate and back up the old template.")
+    ] = False,
 ) -> None:
     """Create an editable clarifications.yaml with the AI's open questions."""
     from meeting_notes.clarifications import ClarificationError, command_template
@@ -500,8 +511,12 @@ def clarify_template(
 @clarify_app.command("apply")
 def clarify_apply(
     job_dir: Annotated[str, typer.Argument(help="Job directory path.")],
-    answers: Annotated[str | None, typer.Option("--answers", help="Clarifications file path.")] = None,
-    local_only: Annotated[bool, typer.Option("--local-only", help="Reject remote summarizers.")] = False,
+    answers: Annotated[
+        str | None, typer.Option("--answers", help="Clarifications file path.")
+    ] = None,
+    local_only: Annotated[
+        bool, typer.Option("--local-only", help="Reject remote summarizers.")
+    ] = False,
     config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Apply answered clarifications: correct the job glossary and transcript,
@@ -556,7 +571,9 @@ def summarizers_test(
 @app.command()
 def benchmark(
     input_file: Annotated[str, typer.Argument(help="Path to audio/video file.")],
-    matrix: Annotated[str, typer.Option("--matrix", help="Benchmark matrix YAML.")] = "config/benchmark-matrix.yaml",
+    matrix: Annotated[
+        str, typer.Option("--matrix", help="Benchmark matrix YAML.")
+    ] = "config/benchmark-matrix.yaml",
     config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Run benchmark comparing configurations."""
@@ -578,5 +595,3 @@ def clean(
     from meeting_notes.pipeline import run_clean
 
     run_clean(job_dir=job_dir, stage=stage, yes=yes)
-
-

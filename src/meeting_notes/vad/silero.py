@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 
 from meeting_notes.vad.base import VADBackend, VADSegment
@@ -43,7 +45,6 @@ class SileroVADBackend(VADBackend):
             if not model_path:
                 # Try to find or download the model
                 import urllib.request
-                from pathlib import Path
 
                 cache_dir = Path.home() / ".cache" / "silero-vad"
                 cache_dir.mkdir(parents=True, exist_ok=True)
@@ -57,10 +58,10 @@ class SileroVADBackend(VADBackend):
             self._model = ort.InferenceSession(model_path)
             log.info("silero.model_loaded", path=model_path)
 
-        except ImportError:
+        except ImportError as exc:
             raise RuntimeError(
                 "onnxruntime not installed. Install with: pip install onnxruntime"
-            )
+            ) from exc
 
     def detect(
         self,

@@ -6,9 +6,12 @@ import os
 import re
 import shutil
 from datetime import datetime
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 

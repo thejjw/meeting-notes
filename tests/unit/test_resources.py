@@ -49,7 +49,7 @@ class TestModelFit:
 
         est = get_resource_estimate("tiny", "whisper_cpp")
         assert est is not None
-        status, reason = check_model_fit(est, diag)
+        status, _reason = check_model_fit(est, diag)
         assert status == "available"
 
     def test_fit_with_insufficient_ram(self) -> None:
@@ -60,7 +60,7 @@ class TestModelFit:
 
         est = get_resource_estimate("large-v3", "whisper_cpp")
         assert est is not None
-        status, reason = check_model_fit(est, diag)
+        status, _reason = check_model_fit(est, diag)
         assert status in ("not_detected", "available_with_warning")
 
 

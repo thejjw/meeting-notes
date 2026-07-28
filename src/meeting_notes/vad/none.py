@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meeting_notes.vad.base import VADBackend, VADSegment
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class NoVADBackend(VADBackend):

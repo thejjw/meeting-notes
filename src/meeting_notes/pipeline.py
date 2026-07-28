@@ -58,7 +58,7 @@ def _load_or_fail(config_path: str | None) -> MeetingNotesConfig:
         return load_config(config_path)
     except ConfigurationError as e:
         console.print(f"[red]Configuration error:[/red] {e}")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
 
 def _check_tools(config: MeetingNotesConfig) -> None:
@@ -73,9 +73,9 @@ def _check_tools(config: MeetingNotesConfig) -> None:
             result = run_command([tool_path, "-version"], timeout=5.0, label=f"check-{tool_name}")
             if not result.success:
                 console.print(f"[yellow]Warning: {tool_name} may not be available[/yellow]")
-        except RuntimeError:
+        except RuntimeError as exc:
             console.print(f"[red]{tool_name} not found at '{tool_path}'. Install FFmpeg.[/red]")
-            raise typer.Exit(1)
+            raise typer.Exit(1) from exc
 
 
 def _active_config_path(config_path: str | None) -> Path:
@@ -309,7 +309,7 @@ def run_pipeline(
                         run_id=run_id,
                         started_at=run_started_at,
                     )
-            except StageCancelledError:
+            except StageCancelledError as exc:
                 console.print(f"\n[yellow]Stage '{stage}' cancelled.[/yellow]")
                 save_manifest(job_dir, manifest)
                 write_run_report(
@@ -322,7 +322,7 @@ def run_pipeline(
                     config=config,
                     error=f"Stage '{stage}' was cancelled.",
                 )
-                raise typer.Exit(130)
+                raise typer.Exit(130) from exc
             except Exception as e:
                 update_stage_status(manifest, stage, "failed", error=str(e))
                 save_manifest(job_dir, manifest)
@@ -338,7 +338,7 @@ def run_pipeline(
                         error=e,
                     )
                 console.print(f"\n[red]Stage '{stage}' failed:[/red] {e}")
-                raise typer.Exit(1)
+                raise typer.Exit(1) from e
             progress.update(task, completed=True, description=f"[{i + 1}/{total}] {stage} done")
 
     save_manifest(job_dir, manifest)
@@ -830,7 +830,7 @@ def _run_merge(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> dic
                     apply_speaker_map(ts_segments, speaker_map)
 
             # Update segments with speaker info
-            for s, ts in zip(segments, ts_segments):
+            for s, ts in zip(segments, ts_segments, strict=True):
                 s["speaker"] = ts.speaker
 
         # Apply glossary corrections if enabled. The job-scoped glossary

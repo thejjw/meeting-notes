@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meeting_notes.audio.chunk import (
     AudioChunk,
@@ -26,6 +26,9 @@ from meeting_notes.transcript.glossary import (
 from meeting_notes.transcript.models import TranscriptSegment
 from meeting_notes.vad.none import NoVADBackend
 
+if TYPE_CHECKING:
+    from pathlib import Path
+
 
 class TestChunking:
     """Test audio chunking logic."""
@@ -38,7 +41,9 @@ class TestChunking:
         assert chunks[0].source_end == 600.0
 
     def test_long_recording_chunked(self) -> None:
-        chunks = compute_chunks(5400.0, mode="auto", max_chunk_minutes=20, trigger_duration_minutes=45)
+        chunks = compute_chunks(
+            5400.0, mode="auto", max_chunk_minutes=20, trigger_duration_minutes=45
+        )
         assert len(chunks) > 1
         # First chunk should start at 0
         assert chunks[0].source_start == 0.0
@@ -93,18 +98,22 @@ class TestGlossary:
         assert g.terms[0].canonical == "Z3Soft"
 
     def test_build_initial_prompt(self) -> None:
-        g = Glossary(terms=[
-            GlossaryTerm(canonical="Z3Soft"),
-            GlossaryTerm(canonical="API"),
-        ])
+        g = Glossary(
+            terms=[
+                GlossaryTerm(canonical="Z3Soft"),
+                GlossaryTerm(canonical="API"),
+            ]
+        )
         prompt = build_initial_prompt(g)
         assert "Z3Soft" in prompt
         assert "API" in prompt
 
     def test_apply_corrections(self) -> None:
-        g = Glossary(terms=[
-            GlossaryTerm(canonical="API", aliases=["에이피아이"]),
-        ])
+        g = Glossary(
+            terms=[
+                GlossaryTerm(canonical="API", aliases=["에이피아이"]),
+            ]
+        )
         corrected, corrections = apply_glossary_corrections(
             "에이피아이 방식으로 진행합니다",
             g,
@@ -114,9 +123,11 @@ class TestGlossary:
         assert corrections[0].rule_canonical == "API"
 
     def test_no_correction_when_no_match(self) -> None:
-        g = Glossary(terms=[
-            GlossaryTerm(canonical="Z3Soft", aliases=["지쓰리소프트"]),
-        ])
+        g = Glossary(
+            terms=[
+                GlossaryTerm(canonical="Z3Soft", aliases=["지쓰리소프트"]),
+            ]
+        )
         corrected, corrections = apply_glossary_corrections(
             "일반적인 회의 내용입니다",
             g,
@@ -125,9 +136,11 @@ class TestGlossary:
         assert len(corrections) == 0
 
     def test_whole_word_only(self) -> None:
-        g = Glossary(terms=[
-            GlossaryTerm(canonical="API", aliases=["에이피"]),
-        ])
+        g = Glossary(
+            terms=[
+                GlossaryTerm(canonical="API", aliases=["에이피"]),
+            ]
+        )
         corrected, _ = apply_glossary_corrections(
             "에이피아이 방식",  # 에이피 inside 에이피아이
             g,

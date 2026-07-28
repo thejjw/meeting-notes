@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import subprocess
 import threading
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
+    from pathlib import Path
 
 log = structlog.get_logger()
 

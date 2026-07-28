@@ -7,7 +7,7 @@ import json
 import tarfile
 import zipfile
 from io import BytesIO
-from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -38,6 +38,9 @@ from meeting_notes.runtime import (
     select_cpu_asset,
     verify_checksum,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_select_windows_x64_verified_asset() -> None:
@@ -378,8 +381,9 @@ def test_pyannote_uses_exclusive_diarization_when_available(tmp_path: Path) -> N
         end = 2.5
 
     class Output:
-        exclusive_speaker_diarization = [(Turn(), "SPEAKER_00")]
-        speaker_diarization = [(Turn(), "WRONG")]
+        def __init__(self) -> None:
+            self.exclusive_speaker_diarization = [(Turn(), "SPEAKER_00")]
+            self.speaker_diarization = [(Turn(), "WRONG")]
 
     received: dict[str, object] = {}
 

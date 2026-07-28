@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Literal
 
@@ -491,9 +492,8 @@ def save_config(config: MeetingNotesConfig, path: Path) -> None:
         # destination on both Windows and POSIX.
         os.replace(tmp_path, path)
     except Exception:
-        os.close(fd) if not os.get_inheritable(fd) else None  # type: ignore[arg-type]
-        try:
+        with suppress(OSError):
+            os.close(fd)
+        with suppress(OSError):
             os.unlink(tmp_path)
-        except OSError:
-            pass
         raise

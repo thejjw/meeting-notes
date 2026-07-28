@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -15,6 +15,9 @@ from meeting_notes.naming import (
 )
 from meeting_notes.summarization.chunking import chunk_transcript, format_chunk_for_summarization
 from meeting_notes.transcript.models import TranscriptDocument, TranscriptSegment
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestSanitizeShortTitle:
@@ -62,11 +65,11 @@ class TestResolveDate:
         assert source == "summary_meeting_date"
 
     def test_fallback_to_mtime(self) -> None:
-        date, source = resolve_date(None, source_mtime=1721644800.0)
+        _date, source = resolve_date(None, source_mtime=1721644800.0)
         assert source == "source_mtime"
 
     def test_fallback_to_processing_date(self) -> None:
-        date, source = resolve_date(None)
+        _date, source = resolve_date(None)
         assert source == "processing_date"
 
 

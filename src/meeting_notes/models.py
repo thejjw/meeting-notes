@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meeting_notes.artifacts import MODEL_ARTIFACTS, model_url
 from meeting_notes.runtime import RuntimeInstallError, cache_root, download_file, sha256_file
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class ModelInstallError(RuntimeInstallError):

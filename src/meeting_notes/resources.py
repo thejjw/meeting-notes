@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import platform
 import subprocess
+from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -219,10 +220,10 @@ def _detect_cuda() -> tuple[bool, str]:
 
 def _detect_tool_version(cmd: list[str]) -> tuple[bool, str]:
     """Detect tool version from --version or -version."""
-    ok, out = _run_command(cmd + ["--version"], timeout=5.0)
+    ok, out = _run_command([*cmd, "--version"], timeout=5.0)
     if ok and out:
         return True, out.splitlines()[0]
-    ok, out = _run_command(cmd + ["-version"], timeout=5.0)
+    ok, out = _run_command([*cmd, "-version"], timeout=5.0)
     if ok and out:
         return True, out.splitlines()[0]
     return False, ""
@@ -257,15 +258,11 @@ def detect_system() -> SystemDiagnostics:
         if parts:
             diag.gpu.device_name = parts[0]
         if len(parts) >= 2:
-            try:
+            with suppress(ValueError):
                 diag.gpu.vram_gb = float(parts[1].replace("MiB", "").strip()) / 1024
-            except ValueError:
-                pass
         if len(parts) >= 3:
-            try:
+            with suppress(ValueError):
                 diag.gpu.free_vram_gb = float(parts[2].replace("MiB", "").strip()) / 1024
-            except ValueError:
-                pass
         if len(parts) >= 4:
             diag.gpu.driver_version = parts[3]
     elif vulkan_devices:
@@ -466,7 +463,8 @@ def check_model_fit(estimate: ResourceEstimate, diag: SystemDiagnostics) -> tupl
 
     return (
         "available",
-        f"Model should fit: {diag.memory.available_ram_gb:.1f} GB available, need {estimate.recommended_free_ram_gb:.1f} GB recommended.",
+        f"Model should fit: {diag.memory.available_ram_gb:.1f} GB available, "
+        f"need {estimate.recommended_free_ram_gb:.1f} GB recommended.",
     )
 
 
@@ -482,7 +480,8 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
 
     # CPU
     lines.append(
-        f"  CPU: {diag.cpu.model_name}, {diag.cpu.physical_cores} cores / {diag.cpu.logical_cores} threads"
+        f"  CPU: {diag.cpu.model_name}, {diag.cpu.physical_cores} cores / "
+        f"{diag.cpu.logical_cores} threads"
     )
 
     # RAM
@@ -520,16 +519,21 @@ def format_diagnostics_table(diag: SystemDiagnostics) -> str:
     lines.append("")
     lines.append("External tools")
     lines.append(
-        f"  FFmpeg: {'available' if diag.tools.ffmpeg_available else 'not found'} {diag.tools.ffmpeg_version}"
+        f"  FFmpeg: {'available' if diag.tools.ffmpeg_available else 'not found'} "
+        f"{diag.tools.ffmpeg_version}"
     )
     lines.append(
-        f"  FFprobe: {'available' if diag.tools.ffprobe_available else 'not found'} {diag.tools.ffprobe_version}"
+        f"  FFprobe: {'available' if diag.tools.ffprobe_available else 'not found'} "
+        f"{diag.tools.ffprobe_version}"
     )
     lines.append(
-        f"  whisper.cpp on PATH: {'available' if diag.tools.whisper_cpp_available else 'not found'} {diag.tools.whisper_cpp_version}"
+        "  whisper.cpp on PATH: "
+        f"{'available' if diag.tools.whisper_cpp_available else 'not found'} "
+        f"{diag.tools.whisper_cpp_version}"
     )
     lines.append(
-        f"  Codex CLI: {'available' if diag.tools.codex_available else 'not found'} {diag.tools.codex_version}"
+        f"  Codex CLI: {'available' if diag.tools.codex_available else 'not found'} "
+        f"{diag.tools.codex_version}"
     )
     lines.append(
         f"  Claude Code: {'available' if diag.tools.claude_available else 'not found'} "

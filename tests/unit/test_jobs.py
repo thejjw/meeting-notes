@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meeting_notes.jobs import (
     compute_stage_fingerprint,
@@ -13,6 +13,9 @@ from meeting_notes.jobs import (
     stage_is_stale,
     update_stage_status,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestJobSlug:

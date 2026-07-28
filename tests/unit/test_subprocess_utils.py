@@ -65,9 +65,12 @@ class TestRunCommand:
         # Use a command that takes longer than the timeout
         # On Windows, use PowerShell Start-Sleep; on Linux, use sleep
         import platform
+
         if platform.system() == "Windows":
             with pytest.raises(RuntimeError, match="timed out"):
-                run_command(["powershell", "-Command", "Start-Sleep -Seconds 10"], timeout=0.5, label="test")
+                run_command(
+                    ["powershell", "-Command", "Start-Sleep -Seconds 10"], timeout=0.5, label="test"
+                )
         else:
             with pytest.raises(RuntimeError, match="timed out"):
                 run_command(["sleep", "10"], timeout=0.5, label="test")

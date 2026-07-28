@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import wave
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -12,6 +12,9 @@ from meeting_notes.audio.normalize import normalize_audio
 from meeting_notes.jobs import create_job_dir, load_manifest, make_job_slug, save_manifest
 from meeting_notes.minutes.render import render_minutes
 from meeting_notes.naming import generate_filenames, sanitize_short_title
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _create_test_wav(path: Path, duration_sec: float = 2.0, sample_rate: int = 16000) -> Path:

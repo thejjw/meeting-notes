@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -33,7 +36,7 @@ def render_minutes(
     """
     title = summary.get("title", "Meeting Notes")
     date = summary.get("meeting_date") or unknown_value_text
-    short_title = summary.get("short_title", "")
+    summary.get("short_title", "")
 
     # Title
     doc_title = title_template.format(date=date, title=title)
@@ -84,7 +87,9 @@ def render_minutes(
             for point in topic.get("summary", []):
                 lines.append(f"- {point}")
             if include_evidence_links and topic.get("evidence"):
-                evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in topic["evidence"])
+                evidence = ", ".join(
+                    f"[{e}](../transcript/transcript.merged.md#{e})" for e in topic["evidence"]
+                )
                 lines.append(f"\n- 근거: {evidence}")
             lines.append("")
 
@@ -97,7 +102,9 @@ def render_minutes(
             status_label = f" ({status})" if status else ""
             lines.append(f"{i}. {dec.get('decision', '')}{status_label}")
             if include_evidence_links and dec.get("evidence"):
-                evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in dec["evidence"])
+                evidence = ", ".join(
+                    f"[{e}](../transcript/transcript.merged.md#{e})" for e in dec["evidence"]
+                )
                 lines.append(f"   - 근거: {evidence}")
         lines.append("")
 
@@ -113,7 +120,9 @@ def render_minutes(
             task = item.get("task", "")
             evidence = ""
             if include_evidence_links and item.get("evidence"):
-                evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"])
+                evidence = ", ".join(
+                    f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"]
+                )
             lines.append(f"| {owner} | {task} | {due} | {evidence} |")
         lines.append("")
 
@@ -166,7 +175,9 @@ def render_minutes(
             checkbox = "[x]" if resolved else "[ ]"
             lines.append(f"- {checkbox} **[{cat}]** {question}{heard_text}{sugg_text}")
             if include_evidence_links and item.get("evidence"):
-                evidence = ", ".join(f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"])
+                evidence = ", ".join(
+                    f"[{e}](../transcript/transcript.merged.md#{e})" for e in item["evidence"]
+                )
                 lines.append(f"  - 근거: {evidence}")
             if resolved:
                 lines.append(f"  - 답변: {item.get('user_answer') or ''}")

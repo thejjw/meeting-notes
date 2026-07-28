@@ -107,7 +107,9 @@ def run_single_benchmark(
 
             # Calculate metrics
             if result.transcription_seconds > 0:
-                result.real_time_factor = result.transcription_seconds / result.audio_duration_seconds
+                result.real_time_factor = (
+                    result.transcription_seconds / result.audio_duration_seconds
+                )
                 result.speed_multiple = result.audio_duration_seconds / result.transcription_seconds
 
             # Peak RAM
@@ -137,7 +139,12 @@ def run_benchmark_matrix(
         model_path = None
         if model_dir:
             model_name = run_config.get("asr", {}).get("model", "medium")
-            variant = run_config.get("asr", {}).get("backend_options", {}).get("whisper_cpp", {}).get("model_variant", "fp16")
+            variant = (
+                run_config.get("asr", {})
+                .get("backend_options", {})
+                .get("whisper_cpp", {})
+                .get("model_variant", "fp16")
+            )
             candidates = [
                 model_dir / f"ggml-{model_name}-{variant}.bin",
                 model_dir / f"ggml-{model_name}.bin",
@@ -190,7 +197,9 @@ def render_benchmark_report(
     output_paths["json"] = json_path
 
     # CSV
-    csv_lines = ["name,backend,model,device,audio_sec,transcribe_sec,rtf,speed_x,segments,chars,peak_ram_mb,error"]
+    csv_lines = [
+        "name,backend,model,device,audio_sec,transcribe_sec,rtf,speed_x,segments,chars,peak_ram_mb,error"
+    ]
     for r in results:
         csv_lines.append(
             f"{r.name},{r.backend},{r.model},{r.device},"
@@ -205,10 +214,15 @@ def render_benchmark_report(
 
     # Markdown
     md_lines = ["# Benchmark Results\n"]
-    md_lines.append("| Name | Backend | Model | Device | Audio | Transcribe | RTF | Speed | Segments | Peak RAM |")
-    md_lines.append("|------|---------|-------|--------|-------|------------|-----|-------|----------|----------|")
+    md_lines.append(
+        "| Name | Backend | Model | Device | Audio | Transcribe | "
+        "RTF | Speed | Segments | Peak RAM |"
+    )
+    md_lines.append(
+        "|------|---------|-------|--------|-------|------------|"
+        "-----|-------|----------|----------|"
+    )
     for r in results:
-        status = "ERROR" if r.error else "OK"
         md_lines.append(
             f"| {r.name} | {r.backend} | {r.model} | {r.device} | "
             f"{r.audio_duration_seconds:.0f}s | {r.transcription_seconds:.0f}s | "

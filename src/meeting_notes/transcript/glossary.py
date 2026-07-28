@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
 import yaml
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -262,12 +265,17 @@ def add_term_to_glossary(path: Path, canonical: str, alias: str | None = None) -
 
     modified = False
     if existing_term:
-        if alias_clean and alias_clean.lower() != canonical_clean.lower():
-            if alias_clean not in existing_term.aliases:
-                existing_term.aliases.append(alias_clean)
-                modified = True
+        if (
+            alias_clean
+            and alias_clean.lower() != canonical_clean.lower()
+            and alias_clean not in existing_term.aliases
+        ):
+            existing_term.aliases.append(alias_clean)
+            modified = True
     else:
-        aliases = [alias_clean] if alias_clean and alias_clean.lower() != canonical_clean.lower() else []
+        aliases = (
+            [alias_clean] if alias_clean and alias_clean.lower() != canonical_clean.lower() else []
+        )
         glossary.terms.append(GlossaryTerm(canonical=canonical_clean, aliases=aliases))
         modified = True
 

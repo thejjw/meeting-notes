@@ -51,7 +51,8 @@ def run_configure(
     """Run the configuration wizard or create safe defaults."""
     if no_configure:
         console.print(
-            "[red]Configuration required. Run 'meeting-notes configure' or use '--accept-defaults'.[/red]"
+            "[red]Configuration required. Run 'meeting-notes configure' "
+            "or use '--accept-defaults'.[/red]"
         )
         raise typer.Exit(1)
 
@@ -439,7 +440,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         console.print(
             "[yellow]The previous configuration and installs were left unchanged.[/yellow]"
         )
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
     save_config(config, target)
     console.print(f"[green]Configuration saved to: {target}[/green]")
@@ -641,7 +642,7 @@ def show_config(resolved: bool = False, config_path: str | None = None) -> None:
         config = load_config(config_path)
     except (ConfigNotFoundError, ConfigValidationError) as e:
         console.print(f"[red]{e}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from e
 
     if resolved:
         console.print_json(config.model_dump_json(indent=2))
@@ -1551,7 +1552,7 @@ def run_models_download(
         console.print(f"[green]Verified model installed: {path}[/green]")
     except (ModelInstallError, OSError) as exc:
         console.print(f"[red]Model installation failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc
 
 
 def run_models_verify(
@@ -1629,4 +1630,4 @@ def run_runtime_install(
         console.print(f"[green]Verified {device} runtime installed: {executable.resolve()}[/green]")
     except (RuntimeInstallError, OSError) as exc:
         console.print(f"[red]Runtime installation failed: {exc}[/red]")
-        raise typer.Exit(1)
+        raise typer.Exit(1) from exc

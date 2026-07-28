@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import wave
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from meeting_notes.audio.inspect import MediaInfo, inspect_media
 from meeting_notes.audio.normalize import create_normalized_path, normalize_audio
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _create_test_wav(path: Path, duration_sec: float = 1.0, sample_rate: int = 16000) -> Path:

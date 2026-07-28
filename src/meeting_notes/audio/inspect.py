@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from meeting_notes.subprocess_utils import run_command
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 log = structlog.get_logger()
 

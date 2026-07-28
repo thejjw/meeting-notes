@@ -38,7 +38,12 @@ def _job(tmp_path: Path) -> Path:
         "metadata": {"language": "ko"},
         "segments": [
             {"id": "seg-000012", "start": 12.0, "end": 16.0, "text": "아르고 시디를 배포합니다."},
-            {"id": "seg-000013", "start": 16.0, "end": 20.0, "text": "아르고 시디 설정을 확인해주세요."},
+            {
+                "id": "seg-000013",
+                "start": 16.0,
+                "end": 20.0,
+                "text": "아르고 시디 설정을 확인해주세요.",
+            },
         ],
     }
     (job / "transcript" / "transcript.merged.json").write_text(
@@ -370,8 +375,12 @@ class TestGlossaryLayering:
 
         global_path = tmp_path / "global.yaml"
         job_path = tmp_path / "job.yaml"
-        save_glossary(Glossary(terms=[GlossaryTerm(canonical="ArgoCD", aliases=["아르고 시디"])]), global_path)
-        save_glossary(Glossary(terms=[GlossaryTerm(canonical="K8s", aliases=["케이 에잇 에스"])]), job_path)
+        save_glossary(
+            Glossary(terms=[GlossaryTerm(canonical="ArgoCD", aliases=["아르고 시디"])]), global_path
+        )
+        save_glossary(
+            Glossary(terms=[GlossaryTerm(canonical="K8s", aliases=["케이 에잇 에스"])]), job_path
+        )
         before = global_path.read_text(encoding="utf-8")
 
         layered = load_layered_glossary(global_path, job_path)
@@ -383,7 +392,9 @@ class TestGlossaryLayering:
         from meeting_notes.transcript.glossary import save_glossary
 
         global_path = tmp_path / "global.yaml"
-        save_glossary(Glossary(terms=[GlossaryTerm(canonical="ArgoCD", aliases=["아르고 시디"])]), global_path)
+        save_glossary(
+            Glossary(terms=[GlossaryTerm(canonical="ArgoCD", aliases=["아르고 시디"])]), global_path
+        )
 
         layered = load_layered_glossary(global_path, tmp_path / "missing.yaml")
 

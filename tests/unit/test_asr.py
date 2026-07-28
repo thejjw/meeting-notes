@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
@@ -15,6 +15,9 @@ from meeting_notes.transcript.render import (
     render_srt,
     render_vtt,
 )
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestASRRegistry:

@@ -134,7 +134,7 @@ class DockerWhisperCppBackend(ASRBackend):
             if extra_args:
                 whisper_args.extend(extra_args)
 
-            cmd = docker_args + [self._image] + whisper_args
+            cmd = [*docker_args, self._image, *whisper_args]
 
             log.info(
                 "docker.transcribe",

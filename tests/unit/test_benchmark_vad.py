@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 from meeting_notes.benchmark.runner import (
     BenchmarkRun,
@@ -12,6 +12,9 @@ from meeting_notes.benchmark.runner import (
 )
 from meeting_notes.vad.base import VADSegment
 from meeting_notes.vad.none import NoVADBackend
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 class TestBenchmarkRun:

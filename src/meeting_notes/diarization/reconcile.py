@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import structlog
 
-from meeting_notes.diarization.base import DiarizationTurn
-from meeting_notes.transcript.models import TranscriptSegment
+if TYPE_CHECKING:
+    from meeting_notes.diarization.base import DiarizationTurn
+    from meeting_notes.transcript.models import TranscriptSegment
 
 log = structlog.get_logger()
 
