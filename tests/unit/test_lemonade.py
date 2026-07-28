@@ -59,6 +59,7 @@ def test_lemonade_is_registered_and_cpu_default_is_unchanged() -> None:
     assert defaults.runtime.asr_backend == "whisper_cpp"
     assert defaults.runtime.device == "cpu"
     assert defaults.asr.backend_options.lemonade.base_url == "http://127.0.0.1:13305"
+    assert defaults.asr.backend_options.lemonade.max_upload_mib == 100.0
 
 
 def test_get_configured_lemonade_backend() -> None:
@@ -210,6 +211,28 @@ def test_large_lemonade_wav_is_chunked_even_when_chunking_is_disabled(
     assert len(chunks) > 1
     assert chunks[0].source_start == 0
     assert chunks[-1].source_end == 1000
+    bytes_per_second = normalized.stat().st_size / 1000.0
+    safe_bytes = 1.5 * 1024 * 1024 * 0.9
+    assert all(chunk.duration * bytes_per_second <= safe_bytes for chunk in chunks)
+
+
+def test_lemonade_wav_below_safe_upload_budget_is_not_chunked(
+    tmp_path: Path,
+) -> None:
+    normalized = tmp_path / "normalized.wav"
+    normalized.write_bytes(b"\0" * (1024 * 1024))
+    config = _config()
+    config.audio.chunking.mode = "none"
+    config.asr.backend_options.lemonade.max_upload_mib = 1.5
+
+    chunks = _transcription_chunks(
+        normalized,
+        {"source": {"duration_seconds": 1000.0}},
+        config,
+    )
+
+    assert len(chunks) == 1
+    assert chunks[0].path == str(normalized)
 
 
 def test_chunk_results_merge_to_absolute_timestamps_and_remove_overlap() -> None:

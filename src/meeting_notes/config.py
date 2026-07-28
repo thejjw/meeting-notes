@@ -89,7 +89,7 @@ class LemonadeBackendOptions(BaseModel):
     connect_timeout_seconds: float = 5.0
     provisioning_timeout_seconds: float = 3600.0
     transcription_timeout_seconds: float = 7200.0
-    max_upload_mib: float = Field(default=40.0, gt=1.0)
+    max_upload_mib: float = Field(default=100.0, gt=1.0)
 
 
 class ASRBackendOptions(BaseModel):

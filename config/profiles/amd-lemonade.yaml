@@ -17,7 +17,8 @@ asr:
       connect_timeout_seconds: 5
       provisioning_timeout_seconds: 3600
       transcription_timeout_seconds: 7200
-      max_upload_mib: 40
+      # Stock Lemonade request ceiling; uploads reserve a 10% safety margin.
+      max_upload_mib: 100
 
 # Optional local summarization. The setup wizard can select this independently
 # from ASR and will never start Lemonade Server itself.

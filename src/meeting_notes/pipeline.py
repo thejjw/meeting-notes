@@ -548,7 +548,14 @@ def _transcription_chunks(
         safe_bytes = upload_bytes * 0.9
         if normalized.stat().st_size > safe_bytes:
             bytes_per_second = normalized.stat().st_size / max(duration, 0.001)
-            upload_minutes = safe_bytes / bytes_per_second / 60.0
+            # compute_chunks expands interior chunks by the overlap on both
+            # sides, so reserve that duration inside the upload-size budget.
+            safe_chunk_seconds = safe_bytes / bytes_per_second
+            overlap_reserve = max(0.0, chunking.overlap_seconds) * 2
+            upload_minutes = max(
+                0.001,
+                safe_chunk_seconds - overlap_reserve,
+            ) / 60.0
             max_minutes = min(max_minutes, upload_minutes)
             mode = "fixed"
 

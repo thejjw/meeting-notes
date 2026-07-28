@@ -125,8 +125,9 @@ asr:
       connect_timeout_seconds: 5
       provisioning_timeout_seconds: 3600
       transcription_timeout_seconds: 7200
-      # Larger normalized WAVs are split and merged automatically.
-      max_upload_mib: 40
+      # Stock Lemonade limits requests to 100 MiB. Audio uses a 90% safe budget;
+      # larger normalized WAVs are split and merged automatically.
+      max_upload_mib: 100
 
 diarization:
   enabled: true

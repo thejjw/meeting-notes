@@ -312,11 +312,13 @@ The Lemonade adapter uses timestamped `verbose_json` responses, so subtitles,
 speaker alignment, and evidence timestamps continue to work.
 
 Long normalized WAV files are split before upload when they exceed the
-conservative `asr.backend_options.lemonade.max_upload_mib` threshold (40 MiB by
-default). Responses are shifted back to absolute recording time, overlap is
-removed at chunk boundaries, and the pipeline writes one continuous transcript.
-Lemonade does not currently document a configurable multipart request-size
-limit, so increasing this value can reintroduce HTTP 413 errors.
+`asr.backend_options.lemonade.max_upload_mib` server ceiling (100 MiB by
+default). Meeting-notes reserves 10% for WAV headers, multipart overhead, and
+chunk overlap, giving the default an effective audio budget of about 90 MiB.
+Responses are shifted back to absolute recording time, overlap is removed at
+chunk boundaries, and the pipeline writes one continuous transcript. Values
+above 100 MiB require a Lemonade Server with a correspondingly increased
+request limit and may otherwise produce HTTP 413 errors.
 
 ## Summarization Backends
 
