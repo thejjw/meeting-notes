@@ -30,6 +30,7 @@ from meeting_notes.resources import (
     format_diagnostics_table,
     get_resource_estimate,
 )
+from meeting_notes.storage import project_cache_root
 
 log = structlog.get_logger()
 console = Console(stderr=True)
@@ -784,7 +785,12 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
     executable = Path(config.runtime.whisper_cpp_path)
     if not executable.is_absolute() and shutil.which(config.runtime.whisper_cpp_path):
         executable = Path(shutil.which(config.runtime.whisper_cpp_path) or executable)
-    manifest = find_manifest_for_executable(executable) if executable.exists() else None
+    cache_dir = project_cache_root(config)
+    manifest = (
+        find_manifest_for_executable(executable, cache_dir=cache_dir)
+        if executable.exists()
+        else None
+    )
     executable_runnable = False
     if executable.is_file() and config.runtime.asr_backend == "whisper_cpp":
         try:
@@ -1339,8 +1345,11 @@ def _provision_runtime(config: MeetingNotesConfig, version: str = "v1.9.1") -> P
         raise RuntimeError(
             f"Managed whisper.cpp supports cpu or vulkan, not '{config.runtime.device}'."
         )
+    cache_dir = project_cache_root(config)
     executable = (
-        install_vulkan(version) if config.runtime.device == "vulkan" else install_cpu(version)
+        install_vulkan(version, cache_dir=cache_dir)
+        if config.runtime.device == "vulkan"
+        else install_cpu(version, cache_dir=cache_dir)
     )
     config.runtime.whisper_cpp_path = str(executable.resolve())
     return executable
@@ -1365,7 +1374,7 @@ def _provision_model(config: MeetingNotesConfig, *, yes: bool, interactive: bool
             raise RuntimeError(
                 f"{config.asr.model} is a large download; rerun with --yes to confirm."
             )
-    path = download_model(config.asr.model)
+    path = download_model(config.asr.model, cache_dir=project_cache_root(config))
     config.asr.model_path = str(path.resolve())
     config.asr.model_cache_dir = str(path.parent.resolve())
     return path
@@ -1516,11 +1525,12 @@ def _print_provisioning_commands(config: MeetingNotesConfig, target: Path) -> No
         console.print(f'  meeting-notes configure --config "{target}" --provision --yes')
 
 
-def run_models_status(output_json: bool = False) -> None:
+def run_models_status(output_json: bool = False, config_path: str | None = None) -> None:
     """Show model download status."""
     from meeting_notes.models import model_statuses
 
-    statuses = model_statuses()
+    config = load_config(config_path)
+    statuses = model_statuses(cache_dir=project_cache_root(config))
     if output_json:
         console.print_json(json.dumps(statuses, indent=2))
         return
@@ -1563,26 +1573,17 @@ def run_models_download(
     config_path: str | None = None,
 ) -> None:
     """Download a model."""
-    selected_config: MeetingNotesConfig | None = None
-    if config_path is not None or backend in {"auto", "lemonade"}:
-        try:
-            selected_config = load_config(config_path)
-        except (ConfigNotFoundError, ConfigValidationError):
-            if backend == "lemonade":
-                console.print(
-                    "[red]Lemonade downloads require an active configuration so the "
-                    "server URL and model ID are unambiguous.[/red]"
-                )
-                raise typer.Exit(2) from None
+    try:
+        selected_config = load_config(config_path)
+    except (ConfigNotFoundError, ConfigValidationError) as error:
+        console.print(
+            "[red]Managed model downloads require an active configuration so "
+            "project.cache_dir is unambiguous.[/red]"
+        )
+        raise typer.Exit(2) from error
     if backend == "auto":
-        backend = selected_config.runtime.asr_backend if selected_config else "whisper_cpp"
+        backend = selected_config.runtime.asr_backend
     if backend == "lemonade":
-        if selected_config is None:
-            console.print(
-                "[red]Lemonade downloads require --config so the server URL and model ID "
-                "are unambiguous.[/red]"
-            )
-            raise typer.Exit(2)
         if model != "large-v3-turbo":
             console.print(
                 "[red]The Lemonade adapter currently supports the canonical "
@@ -1619,7 +1620,7 @@ def run_models_download(
         )
         raise typer.Exit(1)
     try:
-        path = download_model(model)
+        path = download_model(model, cache_dir=project_cache_root(selected_config))
         if config_path is not None:
             target = _target_config_path(config_path)
             config = selected_config or load_config(str(target))
@@ -1642,14 +1643,10 @@ def run_models_verify(
         raise typer.Exit(2)
     from meeting_notes.models import model_path, verify_model
 
-    path = model_path(model)
-    if config_path is not None:
-        try:
-            config = load_config(config_path)
-            if config.asr.model == model and config.asr.model_path:
-                path = Path(config.asr.model_path)
-        except (ConfigNotFoundError, ConfigValidationError):
-            pass
+    config = load_config(config_path)
+    path = model_path(model, cache_dir=project_cache_root(config))
+    if config.asr.model == model and config.asr.model_path:
+        path = Path(config.asr.model_path)
     valid, detail = verify_model(model, path)
     if not valid:
         console.print(f"[red]{model}: {detail}[/red]")
@@ -1657,11 +1654,12 @@ def run_models_verify(
     console.print(f"[green]{model}: verified ({path.resolve()})[/green]")
 
 
-def run_runtime_status(output_json: bool = False) -> None:
+def run_runtime_status(output_json: bool = False, config_path: str | None = None) -> None:
     """Show managed runtime status."""
     from meeting_notes.runtime import installed_runtimes
 
-    runtimes = installed_runtimes()
+    config = load_config(config_path)
+    runtimes = installed_runtimes(cache_dir=project_cache_root(config))
     if output_json:
         console.print_json(json.dumps(runtimes, indent=2))
         return
@@ -1697,10 +1695,15 @@ def run_runtime_install(
     from meeting_notes.runtime import RuntimeInstallError, install_cpu, install_vulkan
 
     try:
-        executable = install_vulkan(version) if device == "vulkan" else install_cpu(version)
+        config = load_config(config_path)
+        cache_dir = project_cache_root(config)
+        executable = (
+            install_vulkan(version, cache_dir=cache_dir)
+            if device == "vulkan"
+            else install_cpu(version, cache_dir=cache_dir)
+        )
         if config_path is not None:
             target = _target_config_path(config_path)
-            config = load_config(str(target))
             config.runtime.device = device
             config.runtime.asr_backend = "whisper_cpp"
             config.runtime.whisper_cpp_path = str(executable.resolve())
@@ -1709,3 +1712,64 @@ def run_runtime_install(
     except (RuntimeInstallError, OSError) as exc:
         console.print(f"[red]Runtime installation failed: {exc}[/red]")
         raise typer.Exit(1) from exc
+
+
+def run_cache_status(*, config_path: str | None = None, output_json: bool = False) -> None:
+    """Show first-party project and legacy cache usage."""
+    from meeting_notes.storage import cache_inventory
+
+    config = load_config(config_path)
+    inventory = cache_inventory(config)
+    if output_json:
+        console.print_json(json.dumps(inventory, indent=2))
+        return
+    console.print("\n[bold]meeting-notes cache status[/bold]\n")
+    for label in ("project", "legacy"):
+        section = inventory[label]
+        if not isinstance(section, dict):
+            continue
+        console.print(f"  {label.title()}: {section.get('root')}")
+        console.print(f"    Total: {int(section.get('total_bytes', 0)) / (1024**3):.2f} GiB")
+        values = section.get("sections")
+        if isinstance(values, dict):
+            for name in ("models", "runtimes", "diarization"):
+                value = values.get(name)
+                if isinstance(value, dict):
+                    console.print(
+                        f"    {name}: {int(value.get('bytes', 0)) / (1024**2):.1f} MiB"
+                    )
+
+
+def run_cache_migrate(*, config_path: str | None = None, yes: bool = False) -> None:
+    """Migrate recognized per-user Whisper assets without changing ASR selection."""
+    from meeting_notes.storage import cache_inventory, migrate_legacy_cache, project_cache_root
+
+    config = load_config(config_path)
+    target = _target_config_path(config_path)
+    before = cache_inventory(config)
+    legacy = before.get("legacy")
+    legacy_bytes = int(legacy.get("total_bytes", 0)) if isinstance(legacy, dict) else 0
+    console.print("\n[bold]Project-local cache migration[/bold]")
+    console.print(f"  Destination: {project_cache_root(config)}")
+    console.print(f"  Legacy storage detected: {legacy_bytes / (1024**3):.2f} GiB")
+    console.print(f"  Active ASR remains: {config.runtime.asr_backend}/{config.runtime.device}")
+    if not yes and not typer.confirm(
+        "Copy, validate, and remove recognized legacy Whisper assets?", default=True
+    ):
+        raise typer.Exit(1)
+    result = migrate_legacy_cache(config, target)
+    console.print("[green]Project-local cache migration completed.[/green]")
+    console.print(f"  Project cache: {result['project_cache']}")
+    console.print(
+        f"  Removed legacy data: {int(result['removed_legacy_bytes']) / (1024**3):.2f} GiB"
+    )
+    unknown = result.get("unknown_legacy_models")
+    if isinstance(unknown, list) and unknown:
+        console.print("[yellow]Unrecognized legacy model files were retained:[/yellow]")
+        for path in unknown:
+            console.print(f"  {path}")
+    unknown_runtime = result.get("unknown_legacy_runtime_files")
+    if isinstance(unknown_runtime, list) and unknown_runtime:
+        console.print("[yellow]Unrecognized legacy runtime files were retained:[/yellow]")
+        for path in unknown_runtime:
+            console.print(f"  {path}")

@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
+from meeting_notes.storage import directory_size, project_cache_root
+
 if TYPE_CHECKING:
     from meeting_notes.config import MeetingNotesConfig
 
@@ -78,7 +80,7 @@ class RocmProbe:
 
 def diarization_cache_root(config: MeetingNotesConfig) -> Path:
     """Return the absolute project-local managed diarization directory."""
-    return Path(config.project.cache_dir).expanduser().resolve() / "diarization"
+    return project_cache_root(config) / "diarization"
 
 
 def model_dir(config: MeetingNotesConfig, repo_id: str) -> Path:
@@ -104,20 +106,6 @@ def runtime_environment(runtime: Path) -> dict[str, str]:
     scripts = runtime / ("Scripts" if os.name == "nt" else "bin")
     env["PATH"] = os.pathsep.join((str(scripts), env.get("PATH", "")))
     return env
-
-
-def directory_size(path: Path) -> int:
-    """Return recursive file bytes while tolerating concurrent cache changes."""
-    if not path.exists():
-        return 0
-    total = 0
-    for item in path.rglob("*"):
-        try:
-            if item.is_file():
-                total += item.stat().st_size
-        except OSError:
-            continue
-    return total
 
 
 def _hip_info_candidates() -> list[Path]:

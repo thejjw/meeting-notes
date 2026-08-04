@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 from meeting_notes.asr.base import ASRBackend, ASRReadiness
 from meeting_notes.asr.lemonade import LemonadeASRBackend
 from meeting_notes.asr.whisper_cpp import WhisperCppBackend
+from meeting_notes.storage import project_cache_root
 
 if TYPE_CHECKING:
     from meeting_notes.config import MeetingNotesConfig
@@ -147,7 +148,9 @@ def get_configured_backend(config: MeetingNotesConfig) -> ConfiguredASRBackend:
 
         options = config.asr.backend_options.whisper_cpp
         executable = Path(config.runtime.whisper_cpp_path).resolve()
-        runtime_manifest = find_manifest_for_executable(executable)
+        runtime_manifest = find_manifest_for_executable(
+            executable, cache_dir=project_cache_root(config)
+        )
         common.update(
             {
                 "threads": _resolve_whisper_threads(config),

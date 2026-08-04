@@ -6,7 +6,7 @@ import os
 from typing import TYPE_CHECKING
 
 from meeting_notes.artifacts import MODEL_ARTIFACTS, model_url
-from meeting_notes.runtime import RuntimeInstallError, cache_root, download_file, sha256_file
+from meeting_notes.runtime import RuntimeInstallError, download_file, sha256_file
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -16,8 +16,8 @@ class ModelInstallError(RuntimeInstallError):
     """A model could not be downloaded or verified."""
 
 
-def model_path(name: str) -> Path:
-    return cache_root() / "models" / f"ggml-{name}.bin"
+def model_path(name: str, *, cache_dir: Path) -> Path:
+    return cache_dir.resolve() / "models" / f"ggml-{name}.bin"
 
 
 def model_metadata(name: str) -> dict[str, object]:
@@ -29,12 +29,22 @@ def model_metadata(name: str) -> dict[str, object]:
         ) from exc
 
 
-def verify_model(name: str, path: Path | None = None) -> tuple[bool, str]:
+def verify_model(
+    name: str,
+    path: Path | None = None,
+    *,
+    cache_dir: Path | None = None,
+) -> tuple[bool, str]:
     metadata = model_metadata(name)
-    target = path or model_path(name)
+    if path is not None:
+        target = path
+    elif cache_dir is not None:
+        target = model_path(name, cache_dir=cache_dir)
+    else:
+        raise ModelInstallError("cache_dir is required when no explicit model path is provided.")
     if not target.is_file():
         return False, f"missing: {target}"
-    expected_size = int(metadata["size"])
+    expected_size = int(str(metadata["size"]))
     if target.stat().st_size != expected_size:
         return False, f"size mismatch: expected {expected_size}, got {target.stat().st_size}"
     actual = sha256_file(target)
@@ -44,9 +54,9 @@ def verify_model(name: str, path: Path | None = None) -> tuple[bool, str]:
     return True, "verified"
 
 
-def download_model(name: str) -> Path:
+def download_model(name: str, *, cache_dir: Path) -> Path:
     model_metadata(name)
-    destination = model_path(name)
+    destination = model_path(name, cache_dir=cache_dir)
     valid, _ = verify_model(name, destination)
     if valid:
         return destination.resolve()
@@ -65,10 +75,10 @@ def download_model(name: str) -> Path:
     return destination.resolve()
 
 
-def model_statuses() -> list[dict[str, object]]:
+def model_statuses(*, cache_dir: Path) -> list[dict[str, object]]:
     values: list[dict[str, object]] = []
     for name, metadata in MODEL_ARTIFACTS.items():
-        path = model_path(name)
+        path = model_path(name, cache_dir=cache_dir)
         valid, detail = verify_model(name, path)
         values.append(
             {

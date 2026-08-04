@@ -179,11 +179,12 @@ def models_list() -> None:
 @models_app.command("status")
 def models_status(
     output_json: Annotated[bool, typer.Option("--json")] = False,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Show model download status."""
     from meeting_notes.configure import run_models_status
 
-    run_models_status(output_json=output_json)
+    run_models_status(output_json=output_json, config_path=config_path)
 
 
 @models_app.command("info")
@@ -232,11 +233,12 @@ app.add_typer(runtime_app, name="runtime")
 @runtime_app.command("status")
 def runtime_status(
     output_json: Annotated[bool, typer.Option("--json")] = False,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
 ) -> None:
     """Show managed runtime installations."""
     from meeting_notes.configure import run_runtime_status
 
-    run_runtime_status(output_json=output_json)
+    run_runtime_status(output_json=output_json, config_path=config_path)
 
 
 @runtime_app.command("install")
@@ -250,6 +252,39 @@ def runtime_install(
     from meeting_notes.configure import run_runtime_install
 
     run_runtime_install(device=device, version=version, config_path=config_path, yes=yes)
+
+
+# --- cache commands ---
+
+
+cache_app = typer.Typer(help="Inspect and migrate first-party project storage.")
+app.add_typer(cache_app, name="cache")
+
+
+@cache_app.command("status")
+def cache_status(
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+) -> None:
+    """Show project-local and legacy meeting-notes cache usage."""
+    from meeting_notes.configure import run_cache_status
+
+    run_cache_status(config_path=config_path, output_json=output_json)
+
+
+@cache_app.command("migrate")
+def cache_migrate(
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
+) -> None:
+    """Migrate recognized legacy Whisper assets into the project cache."""
+    from meeting_notes.configure import run_cache_migrate
+
+    try:
+        run_cache_migrate(config_path=config_path, yes=yes)
+    except RuntimeError as error:
+        console.print(f"[red]Cache migration failed:[/red] {error}")
+        raise typer.Exit(1) from error
 
 
 # --- diarization commands ---

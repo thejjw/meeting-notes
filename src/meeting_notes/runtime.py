@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from meeting_notes.artifacts import (
     CPU_ARCHIVES,
@@ -35,14 +35,6 @@ class RuntimeAsset:
     sha256: str
     platform: str
     architecture: str
-
-
-def cache_root() -> Path:
-    """Return the per-user meeting-notes cache."""
-    if os.name == "nt":
-        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
-        return base / "meeting-notes" / "cache"
-    return Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "meeting-notes"
 
 
 def normalize_platform(system: str | None = None) -> str:
@@ -159,9 +151,9 @@ def safe_extract(archive: Path, destination: Path) -> None:
         raise RuntimeInstallError(f"Unsupported or corrupt archive: {archive}") from exc
 
 
-def runtime_dir(version: str, backend: str) -> Path:
+def runtime_dir(version: str, backend: str, *, cache_dir: Path) -> Path:
     return (
-        cache_root()
+        cache_dir.resolve()
         / "runtimes"
         / version
         / f"{normalize_platform()}-{normalize_architecture()}-{backend}"
@@ -232,9 +224,9 @@ def _manifest(
     }
 
 
-def install_cpu(version: str = WHISPER_CPP_VERSION) -> Path:
+def install_cpu(version: str = WHISPER_CPP_VERSION, *, cache_dir: Path) -> Path:
     asset = select_cpu_asset(version)
-    destination = runtime_dir(version, "cpu")
+    destination = runtime_dir(version, "cpu", cache_dir=cache_dir)
     existing = load_manifest(destination)
     if existing and Path(str(existing["executable_path"])).is_file():
         executable = Path(str(existing["executable_path"]))
@@ -299,7 +291,7 @@ def build_commands(
     ]
 
 
-def install_vulkan(version: str = WHISPER_CPP_VERSION) -> Path:
+def install_vulkan(version: str = WHISPER_CPP_VERSION, *, cache_dir: Path) -> Path:
     missing = vulkan_prerequisites()
     if missing:
         raise RuntimeInstallError(
@@ -307,7 +299,7 @@ def install_vulkan(version: str = WHISPER_CPP_VERSION) -> Path:
             + ", ".join(missing)
             + ". Install system developer tools, then rerun this command."
         )
-    destination = runtime_dir(version, "vulkan")
+    destination = runtime_dir(version, "vulkan", cache_dir=cache_dir)
     existing = load_manifest(destination)
     if existing and Path(str(existing["executable_path"])).is_file():
         executable = Path(str(existing["executable_path"]))
@@ -347,24 +339,26 @@ def load_manifest(root: Path) -> dict[str, Any] | None:
     path = root / "manifest.json"
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
-        return value if isinstance(value, dict) else None
+        return cast("dict[str, Any]", value) if isinstance(value, dict) else None
     except (OSError, json.JSONDecodeError):
         return None
 
 
-def find_manifest_for_executable(executable: Path) -> dict[str, Any] | None:
+def find_manifest_for_executable(
+    executable: Path, *, cache_dir: Path
+) -> dict[str, Any] | None:
     resolved = executable.resolve()
     for parent in (resolved.parent, *resolved.parents):
         manifest = load_manifest(parent)
         if manifest is not None:
             return manifest
-        if parent == cache_root():
+        if parent == cache_dir.resolve():
             break
     return None
 
 
-def installed_runtimes() -> list[dict[str, Any]]:
-    root = cache_root() / "runtimes"
+def installed_runtimes(*, cache_dir: Path) -> list[dict[str, Any]]:
+    root = cache_dir.resolve() / "runtimes"
     if not root.exists():
         return []
     found: list[dict[str, Any]] = []

@@ -5,6 +5,8 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Project-local Whisper model/runtime storage and `cache status` / `cache migrate`
+  commands for verified, transactional migration from the former per-user cache.
 - Project-local native-Windows ROCm hybrid diarization: CPU segmentation and
   clustering with AMD GPU speaker embeddings in an isolated managed runtime.
 - `diarization status`, `diarization remove-runtime`, and
@@ -33,6 +35,8 @@ All notable changes to meeting-notes will be documented in this file.
   "no timing history yet" until a matching job has completed once.
 
 ### Changed
+- `project.cache_dir` is now the sole root for meeting-notes-managed Whisper models,
+  whisper.cpp runtimes, build logs, and diarization assets on every platform.
 - CPU is now the explicit diarization default. The ambiguous `device: auto`
   configuration is rejected with migration guidance.
 - Managed diarization models and ROCm environments now live together under the

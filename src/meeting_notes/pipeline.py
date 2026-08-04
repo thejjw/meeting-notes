@@ -45,6 +45,7 @@ from meeting_notes.publication import (
     render_transcript_variants,
     write_run_report,
 )
+from meeting_notes.storage import project_cache_root
 from meeting_notes.timing import build_time_estimate_lines
 from meeting_notes.transcript.render import render_all_formats
 
@@ -104,7 +105,7 @@ def _asr_remediation(
         f"Active config: {active_config}",
     ]
 
-    runtimes = installed_runtimes()
+    runtimes = installed_runtimes(cache_dir=project_cache_root(config))
     if not runtime_ready:
         matching = [
             item

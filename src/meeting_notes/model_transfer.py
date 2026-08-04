@@ -19,7 +19,8 @@ from meeting_notes.artifacts import MODEL_ARTIFACTS
 from meeting_notes.config import load_config, resolve_config_path, save_config
 from meeting_notes.diarization.acceleration import model_dir as managed_diarization_model_dir
 from meeting_notes.models import model_path, verify_model
-from meeting_notes.runtime import cache_root, sha256_file
+from meeting_notes.runtime import sha256_file
+from meeting_notes.storage import project_cache_root
 
 TRANSFER_VERSION = 1
 MANIFEST_NAME = "meeting-notes-transfer.json"
@@ -159,7 +160,7 @@ def backup_whisper(
             f"Unknown managed Whisper model '{selected}'. "
             f"Available: {', '.join(MODEL_ARTIFACTS)}"
         )
-    source = model_path(selected)
+    source = model_path(selected, cache_dir=project_cache_root(config))
     valid, detail = verify_model(selected, source)
     if not valid:
         raise ModelTransferError(f"Whisper model is not ready for backup: {detail}")
@@ -414,7 +415,7 @@ def restore_archive(
                 or len(manifest["files"]) != 1
             ):
                 raise ModelTransferError("Whisper archive does not match the artifact catalog.")
-            destination = cache_root() / "models" / f"ggml-{name}.bin"
+            destination = project_cache_root(config) / "models" / f"ggml-{name}.bin"
         elif kind == "diarization":
             repo_id = str(model.get("repo_id", ""))
             if not repo_id or "/" not in repo_id:

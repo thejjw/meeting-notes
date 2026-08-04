@@ -245,6 +245,7 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes config [show/status/edit/reset]` | Display, inspect, edit, or reset application configuration |
 | `meeting-notes models [list/status/info/download/verify]` | List, check, download, or verify Whisper model integrity |
 | `meeting-notes runtime [status/install]` | Check runtime status or install whisper.cpp CPU/Vulkan binaries |
+| `meeting-notes cache [status/migrate]` | Inspect project storage or transactionally migrate legacy Whisper assets |
 | `meeting-notes diarization setup` | Provision Community-1 from Hugging Face or a portable backup, with optional ROCm acceleration |
 | `meeting-notes diarization status` | Show model/runtime readiness and total project-local storage |
 | `meeting-notes diarization remove-runtime` | Remove the project-local ROCm runtime and return diarization to CPU |
@@ -685,9 +686,11 @@ publication generations.
 
 ### Project and job data
 
-Paths such as `data_dir`, `cache_dir`, and `model_cache_dir` are taken from the
-active configuration. Relative paths are resolved from the directory where the
-command is run. With the example defaults, the workspace contains:
+Paths such as `data_dir` and `cache_dir` are taken from the active configuration.
+`project.cache_dir` is the authority for all meeting-notes-managed models and
+runtimes. Relative paths are resolved from the directory where the command is run;
+an absolute cache path is recommended when the config file is outside the project.
+With the example defaults, the workspace contains:
 
 | Path | Contents |
 |------|----------|
@@ -699,7 +702,8 @@ command is run. With the example defaults, the workspace contains:
 | `./data/meetings/<job>/summary/` | Current structured JSON or local Markdown summary |
 | `./data/meetings/<job>/output/` | Current minutes, publication generations, and compact run reports |
 | `./data/meetings/<job>/logs/` | Retained tool or build logs when produced |
-| `./cache/` and `./cache/models/` | Project-configured caches and Whisper model files |
+| `./cache/models/` | Verified managed Whisper model files |
+| `./cache/runtimes/` | Managed whisper.cpp CPU/Vulkan runtimes and build logs |
 | `./cache/diarization/models/` | Project-local Community-1 model snapshots |
 | `./cache/diarization/runtimes/` | Optional project-local ROCm Python runtime (about 6.1 GiB) |
 
@@ -748,8 +752,6 @@ is intentionally disposable.
 |----------|----------|----------|
 | Windows | `%APPDATA%\meeting-notes\config.yaml` | User configuration |
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/meeting-notes/config.yaml` | User configuration |
-| Windows | `%LOCALAPPDATA%\meeting-notes\cache\` | Managed whisper.cpp runtimes, downloads, and build logs |
-| Linux | `${XDG_CACHE_HOME:-~/.cache}/meeting-notes/` | The same whisper.cpp managed cache |
 | All | `~/.cache/silero-vad/` | Silero VAD model when that backend downloads it |
 
 An explicit `--config`, `MEETING_NOTES_CONFIG`, or project-local
@@ -757,10 +759,21 @@ An explicit `--config`, `MEETING_NOTES_CONFIG`, or project-local
 `meeting-notes config status` and `meeting-notes config show --resolved` before
 scrubbing.
 
-Managed cache directories can be removed after meeting-notes processes have
-stopped; required runtimes and models will need to be downloaded or rebuilt
-again. Removing the active configuration does not remove jobs or caches, and
-removing jobs does not remove the configuration or models.
+First-party managed cache directories live under `project.cache_dir` and can be
+removed after meeting-notes processes have stopped; required runtimes and models
+will need to be downloaded or rebuilt again. Older releases used the OS user cache.
+Inspect and migrate those recognized assets with:
+
+```powershell
+uv run meeting-notes cache status
+uv run meeting-notes cache migrate
+```
+
+Migration verifies models and runtimes in project staging, updates legacy absolute
+references, and removes recognized legacy copies only after configuration is saved.
+Unrecognized files are retained and reported. Removing the active configuration
+does not remove jobs or caches, and removing jobs does not remove the configuration
+or models.
 
 ### Provider and development data
 
@@ -946,9 +959,10 @@ Windows Vulkan requires Git, CMake, Visual Studio C++ Build Tools, and Vulkan SD
 tooling. Linux requires Git, CMake, a C++ toolchain, and Vulkan development packages.
 The app diagnoses these prerequisites but does not install system-wide developer tools.
 
-Managed assets live under `%LOCALAPPDATA%\meeting-notes\cache` on Windows and
-`${XDG_CACHE_HOME:-~/.cache}/meeting-notes` on Linux. Failed downloads do not replace
-verified assets; Vulkan build logs are retained beside the runtime directory.
+Managed assets live under the active configuration's `project.cache_dir` on every
+platform. Failed downloads do not replace verified assets; Vulkan build logs are
+retained beside the project-local runtime directory. The former per-user cache is
+read only by `meeting-notes cache status/migrate` for one-way legacy migration.
 
 **Build scripts and Docker**
 

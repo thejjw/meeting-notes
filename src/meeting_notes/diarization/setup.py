@@ -28,7 +28,7 @@ from meeting_notes.diarization.acceleration import (
     provision_runtime,
     remove_runtime,
 )
-from meeting_notes.runtime import cache_root
+from meeting_notes.storage import legacy_user_cache_root
 
 console = Console(stderr=True)
 
@@ -216,7 +216,7 @@ def run_diarization_setup(
         else None
     )
     if configured_model and _valid_model(configured_model) and configured_model != destination:
-        legacy_root = (cache_root() / "diarization").resolve()
+        legacy_root = (legacy_user_cache_root() / "diarization").resolve()
         try:
             is_legacy = configured_model.is_relative_to(legacy_root)
         except ValueError:

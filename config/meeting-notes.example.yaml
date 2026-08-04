@@ -12,6 +12,7 @@ setup:
 
 project:
   data_dir: ./data
+  # Sole root for meeting-notes-managed Whisper and diarization assets.
   cache_dir: ./cache
   temp_dir: null
   copy_source_into_job: true
@@ -81,6 +82,7 @@ vad:
 asr:
   model: large-v3-turbo
   model_path: null
+  # Compatibility mirror; managed downloads derive this from project.cache_dir.
   model_cache_dir: ./cache/models
   language: ko
   task: transcribe

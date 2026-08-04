@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 
 def _config(path: Path) -> Path:
     config = MeetingNotesConfig(setup=SetupConfig(completed=True))
+    config.project.cache_dir = str(path.parent / "cache")
     save_config(config, path)
     return path
 
@@ -52,7 +53,9 @@ def test_whisper_backup_and_restore_updates_config(
     config.asr.model = name
     config.asr.model_path = str(source)
     save_config(config, config_path)
-    monkeypatch.setattr("meeting_notes.model_transfer.model_path", lambda value: source)
+    monkeypatch.setattr(
+        "meeting_notes.model_transfer.model_path", lambda value, **kwargs: source
+    )
 
     archive, sidecar = backup_whisper(
         config_path=str(config_path),
@@ -68,10 +71,6 @@ def test_whisper_backup_and_restore_updates_config(
         assert manifest["model"]["name"] == name
         assert all("source-cache" not in item for item in value.namelist())
 
-    destination_cache = tmp_path / "destination-cache"
-    monkeypatch.setattr(
-        "meeting_notes.model_transfer.cache_root", lambda: destination_cache
-    )
     destination = restore_archive("whisper", archive, config_path=str(config_path))
 
     assert destination.read_bytes() == payload
@@ -93,7 +92,9 @@ def test_whisper_restore_refuses_collision_without_force(
     config = load_config(str(config_path))
     config.asr.model = name
     save_config(config, config_path)
-    monkeypatch.setattr("meeting_notes.model_transfer.model_path", lambda value: source)
+    monkeypatch.setattr(
+        "meeting_notes.model_transfer.model_path", lambda value, **kwargs: source
+    )
     archive, _ = backup_whisper(
         config_path=str(config_path), archive_path=tmp_path / "model.zip"
     )
@@ -101,9 +102,6 @@ def test_whisper_restore_refuses_collision_without_force(
     destination = destination_cache / "models" / f"ggml-{name}.bin"
     destination.parent.mkdir(parents=True)
     destination.write_bytes(b"old")
-    monkeypatch.setattr(
-        "meeting_notes.model_transfer.cache_root", lambda: destination_cache
-    )
 
     with pytest.raises(ModelTransferError, match="Use -Force"):
         restore_archive("whisper", archive, config_path=str(config_path))
@@ -217,7 +215,9 @@ def test_restore_rejects_sidecar_mismatch(
     config = load_config(str(config_path))
     config.asr.model = name
     save_config(config, config_path)
-    monkeypatch.setattr("meeting_notes.model_transfer.model_path", lambda value: source)
+    monkeypatch.setattr(
+        "meeting_notes.model_transfer.model_path", lambda value, **kwargs: source
+    )
     archive, sidecar = backup_whisper(
         config_path=str(config_path), archive_path=tmp_path / "model.zip"
     )
@@ -257,7 +257,9 @@ def test_forced_restore_rolls_back_model_when_config_save_fails(
     config = load_config(str(config_path))
     config.asr.model = name
     save_config(config, config_path)
-    monkeypatch.setattr("meeting_notes.model_transfer.model_path", lambda value: source)
+    monkeypatch.setattr(
+        "meeting_notes.model_transfer.model_path", lambda value, **kwargs: source
+    )
     archive, _ = backup_whisper(
         config_path=str(config_path), archive_path=tmp_path / "model.zip"
     )
@@ -265,9 +267,6 @@ def test_forced_restore_rolls_back_model_when_config_save_fails(
     destination = destination_cache / "models" / f"ggml-{name}.bin"
     destination.parent.mkdir(parents=True)
     destination.write_bytes(b"old weights")
-    monkeypatch.setattr(
-        "meeting_notes.model_transfer.cache_root", lambda: destination_cache
-    )
     monkeypatch.setattr(
         "meeting_notes.model_transfer.save_config",
         lambda config, path: (_ for _ in ()).throw(OSError("read only")),

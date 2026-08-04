@@ -33,7 +33,14 @@ if ($Model) { $Arguments += @("--model", $Model) }
 if ($Config) { $Arguments += @("--config", $Config) }
 if ($Force) { $Arguments += "--force" }
 
-& uv @Arguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Whisper model $($Action.ToLowerInvariant()) failed with exit code $LASTEXITCODE."
+Push-Location -LiteralPath $RepositoryRoot
+try {
+    & uv @Arguments
+    $TransferExitCode = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+if ($TransferExitCode -ne 0) {
+    throw "Whisper model $($Action.ToLowerInvariant()) failed with exit code $TransferExitCode."
 }
