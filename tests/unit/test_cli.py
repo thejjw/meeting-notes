@@ -37,6 +37,9 @@ class TestCLIBasic:
     def test_process_help(self) -> None:
         result = runner.invoke(app, ["process", "--help"])
         assert result.exit_code == 0
+        assert "--num-speakers" in result.output
+        assert "--min-speakers" in result.output
+        assert "--max-speakers" in result.output
 
     def test_clean_help(self) -> None:
         result = runner.invoke(app, ["clean", "--help"])

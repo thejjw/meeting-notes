@@ -225,6 +225,8 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes process FILE --dry-run` | Show execution plan without running |
 | `meeting-notes process FILE --from STAGE` | Resume pipeline execution from a specific stage |
 | `meeting-notes process FILE --force-stage STAGE` | Re-run a specific stage |
+| `meeting-notes process FILE --num-speakers N` | Use a known exact speaker count for this run |
+| `meeting-notes process FILE --min-speakers N --max-speakers N` | Bound automatic speaker counting for this run |
 | `meeting-notes doctor` | Check environment, dependencies, and tool integrity |
 
 ### Job Review & Refinement
@@ -796,6 +798,25 @@ without rerunning ASR:
 ```powershell
 uv run meeting-notes process "<audio-file>" --from diarize
 ```
+
+Community-1 detects the number of speakers automatically. The default configuration
+keeps a minimum of two speakers but does not impose a maximum. When attendance is
+known, an exact count generally gives the pipeline a better constraint:
+
+```powershell
+uv run meeting-notes process "<audio-file>" --num-speakers 10
+```
+
+For variable attendance, provide either or both bounds for that invocation. These
+options override the loaded configuration in memory and do not rewrite it:
+
+```powershell
+uv run meeting-notes process "<audio-file>" --min-speakers 4 --max-speakers 10
+```
+
+`--num-speakers` cannot be combined with `--min-speakers` or `--max-speakers`.
+The resolved speaker policy is shown by `--dry-run` and recorded in the diarization
+stage runtime metadata.
 
 An already-downloaded pyannote pipeline can instead be selected with
 `diarization.model_path`; in that mode the application does not require

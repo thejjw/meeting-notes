@@ -53,7 +53,7 @@ class DiarizationBackend(ABC):
         *,
         num_speakers: int | None = None,
         min_speakers: int = 2,
-        max_speakers: int = 8,
+        max_speakers: int | None = None,
     ) -> DiarizationResult:
         """Run speaker diarization.
 
@@ -61,7 +61,7 @@ class DiarizationBackend(ABC):
             audio_path: Path to audio file.
             num_speakers: Known number of speakers (None = auto-detect).
             min_speakers: Minimum speaker count.
-            max_speakers: Maximum speaker count.
+            max_speakers: Maximum speaker count (None = unbounded).
 
         Returns:
             DiarizationResult with speaker turns.

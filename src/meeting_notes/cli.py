@@ -299,6 +299,18 @@ def process(
     copy_to_input: Annotated[
         bool, typer.Option("--copy-to-input", help="Copy finalized files next to input recording.")
     ] = False,
+    num_speakers: Annotated[
+        int | None,
+        typer.Option("--num-speakers", min=1, help="Known exact number of speakers."),
+    ] = None,
+    min_speakers: Annotated[
+        int | None,
+        typer.Option("--min-speakers", min=1, help="Minimum number of speakers for this run."),
+    ] = None,
+    max_speakers: Annotated[
+        int | None,
+        typer.Option("--max-speakers", min=1, help="Maximum number of speakers for this run."),
+    ] = None,
 ) -> None:
     """Process an audio/video file into meeting notes."""
     from meeting_notes.pipeline import run_pipeline
@@ -314,6 +326,9 @@ def process(
         finalize_names=finalize_names,
         local_only=local_only,
         copy_to_input=copy_to_input,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
     )
 
 

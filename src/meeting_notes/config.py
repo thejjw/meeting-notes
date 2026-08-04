@@ -218,9 +218,9 @@ class DiarizationConfig(BaseModel):
     model_path: str | None = None
     token_env: str = "HF_TOKEN"
     device: str = "auto"
-    num_speakers: int | None = None
-    min_speakers: int = 2
-    max_speakers: int = 8
+    num_speakers: int | None = Field(default=None, ge=1)
+    min_speakers: int = Field(default=2, ge=1)
+    max_speakers: int | None = Field(default=None, ge=1)
     use_exclusive_diarization: bool = True
     assignment_method: str = "maximum_overlap"
     minimum_overlap_ratio: float = 0.15
@@ -228,6 +228,13 @@ class DiarizationConfig(BaseModel):
     unknown_speaker_label: str = "UNKNOWN"
     speaker_map_path: str | None = None
     write_rttm: bool = True
+
+    @model_validator(mode="after")
+    def validate_speaker_bounds(self) -> DiarizationConfig:
+        """Ensure automatic speaker-count bounds form a valid range."""
+        if self.max_speakers is not None and self.min_speakers > self.max_speakers:
+            raise ValueError("min_speakers must be less than or equal to max_speakers")
+        return self
 
 
 class GlossaryConfig(BaseModel):

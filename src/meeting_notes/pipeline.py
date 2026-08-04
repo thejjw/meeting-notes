@@ -25,7 +25,7 @@ from meeting_notes.audio.chunk import (
 )
 from meeting_notes.audio.inspect import inspect_media
 from meeting_notes.audio.normalize import create_normalized_path, normalize_audio
-from meeting_notes.config import MeetingNotesConfig, load_config
+from meeting_notes.config import DiarizationConfig, MeetingNotesConfig, load_config
 from meeting_notes.errors import (
     ConfigurationError,
     DependencyMissingError,
@@ -202,6 +202,45 @@ def _check_asr_readiness(config: MeetingNotesConfig, config_path: str | None) ->
     raise typer.Exit(1)
 
 
+def _apply_speaker_overrides(
+    config: MeetingNotesConfig,
+    *,
+    num_speakers: int | None,
+    min_speakers: int | None,
+    max_speakers: int | None,
+) -> MeetingNotesConfig:
+    """Apply invocation-only speaker-count overrides to a validated config copy."""
+    if num_speakers is not None and (min_speakers is not None or max_speakers is not None):
+        raise typer.BadParameter(
+            "--num-speakers cannot be combined with --min-speakers or --max-speakers"
+        )
+
+    data = config.diarization.model_dump()
+    if num_speakers is not None:
+        data["num_speakers"] = num_speakers
+    elif min_speakers is not None or max_speakers is not None:
+        # A per-run range intentionally replaces any configured exact count.
+        data["num_speakers"] = None
+        if min_speakers is not None:
+            data["min_speakers"] = min_speakers
+        if max_speakers is not None:
+            data["max_speakers"] = max_speakers
+
+    try:
+        diarization = DiarizationConfig.model_validate(data)
+    except ValueError as exc:
+        raise typer.BadParameter(f"Invalid speaker-count overrides: {exc}") from exc
+    return config.model_copy(update={"diarization": diarization})
+
+
+def _speaker_policy_description(config: DiarizationConfig) -> str:
+    """Return a concise description of the effective speaker-count policy."""
+    if config.num_speakers is not None:
+        return f"exactly {config.num_speakers}"
+    maximum = str(config.max_speakers) if config.max_speakers is not None else "unbounded"
+    return f"automatic (min={config.min_speakers}, max={maximum})"
+
+
 def run_pipeline(
     input_file: str,
     config_path: str | None = None,
@@ -213,9 +252,18 @@ def run_pipeline(
     finalize_names: bool = True,
     local_only: bool = False,
     copy_to_input: bool = False,
+    num_speakers: int | None = None,
+    min_speakers: int | None = None,
+    max_speakers: int | None = None,
 ) -> None:
     """Process an audio/video file into meeting notes."""
     config = _load_or_fail(config_path)
+    config = _apply_speaker_overrides(
+        config,
+        num_speakers=num_speakers,
+        min_speakers=min_speakers,
+        max_speakers=max_speakers,
+    )
     _check_tools(config)
 
     source = Path(input_file)
@@ -372,6 +420,8 @@ def _print_dry_run(
     console.print(f"  Model: {config.asr.model}")
     console.print(f"  Language: {config.asr.language}")
     console.print(f"  Diarization: {'enabled' if config.diarization.enabled else 'disabled'}")
+    if config.diarization.enabled:
+        console.print(f"  Speaker policy: {_speaker_policy_description(config.diarization)}")
     console.print(f"  Summarization: {'enabled' if config.summarization.enabled else 'disabled'}")
     console.print(f"\n  Source: {source}")
     console.print(f"  Job dir: {job_dir}")
@@ -693,6 +743,9 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
             "backend": config.diarization.backend,
             "device": config.diarization.device,
             "model": config.diarization.model,
+            "num_speakers": config.diarization.num_speakers,
+            "min_speakers": config.diarization.min_speakers,
+            "max_speakers": config.diarization.max_speakers,
         }
 
         # Import and try to load pyannote

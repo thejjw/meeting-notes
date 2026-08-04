@@ -26,6 +26,6 @@ class NoDiarizationBackend(DiarizationBackend):
         *,
         num_speakers: int | None = None,
         min_speakers: int = 2,
-        max_speakers: int = 8,
+        max_speakers: int | None = None,
     ) -> DiarizationResult:
         return DiarizationResult(turns=[], backend="none")

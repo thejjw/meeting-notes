@@ -5,6 +5,8 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `process --num-speakers`, `--min-speakers`, and `--max-speakers` invocation-only
+  controls for exact or bounded speaker diarization.
 - `meeting-notes clean JOB_DIR --final-only` - preview and transactionally reduce a
   completed job to its finalized recording, Markdown meeting notes, and Markdown
   transcript; supports `--dry-run` and non-interactive `--yes`.
@@ -26,6 +28,10 @@ All notable changes to meeting-notes will be documented in this file.
   "no timing history yet" until a matching job has completed once.
 
 ### Changed
+- Local Community-1 diarization no longer imposes an eight-speaker maximum by
+  default; `max_speakers: null` leaves automatic speaker counting unbounded.
+- Diarization runtime metadata and `process --dry-run` now report the effective
+  speaker-count policy.
 - Glossary matching (`transcript/glossary.py`) now supports a layered
   global-then-per-job lookup via `load_layered_glossary`/`merge_glossaries`.
 - Diarization stage now records its backend/device/model identity in the

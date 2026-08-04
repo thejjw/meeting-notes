@@ -115,7 +115,7 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         *,
         num_speakers: int | None = None,
         min_speakers: int = 2,
-        max_speakers: int = 8,
+        max_speakers: int | None = None,
     ) -> DiarizationResult:
         """Run pyannote speaker diarization."""
         if not audio_path.exists():
@@ -130,7 +130,8 @@ class PyannoteDiarizationBackend(DiarizationBackend):
             params["num_speakers"] = num_speakers
         else:
             params["min_speakers"] = min_speakers
-            params["max_speakers"] = max_speakers
+            if max_speakers is not None:
+                params["max_speakers"] = max_speakers
 
         log.info(
             "pyannote.diarizing",

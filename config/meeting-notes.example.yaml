@@ -138,7 +138,7 @@ diarization:
   device: auto
   num_speakers: null
   min_speakers: 2
-  max_speakers: 8
+  max_speakers: null
   use_exclusive_diarization: true
   assignment_method: maximum_overlap
   minimum_overlap_ratio: 0.15

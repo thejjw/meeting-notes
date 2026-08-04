@@ -10,6 +10,7 @@ import pytest
 import yaml
 
 from meeting_notes.config import (
+    DiarizationConfig,
     MeetingNotesConfig,
     SetupConfig,
     load_config,
@@ -35,6 +36,14 @@ class TestConfigModels:
         assert config.runtime.device == "cpu"
         assert config.asr.model == "large-v3-turbo"
         assert config.asr.language == "ko"
+        assert config.diarization.min_speakers == 2
+        assert config.diarization.max_speakers is None
+
+    def test_diarization_speaker_counts_are_validated(self) -> None:
+        with pytest.raises(ValueError, match="greater than or equal to 1"):
+            DiarizationConfig(num_speakers=0)
+        with pytest.raises(ValueError, match="min_speakers must be less"):
+            DiarizationConfig(min_speakers=5, max_speakers=4)
 
     def test_config_from_dict(self) -> None:
         data = {

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
+import typer
 
 from meeting_notes.asr.whisper_cpp import WhisperCppBackend
 from meeting_notes.config import MeetingNotesConfig, SetupConfig, load_config, save_config
@@ -25,7 +26,9 @@ from meeting_notes.diarization.setup import (
 )
 from meeting_notes.errors import DiarizationUnavailableError
 from meeting_notes.pipeline import (
+    _apply_speaker_overrides,
     _asr_remediation,
+    _print_dry_run,
     _resolve_whisper_threads,
     _run_diarize,
     _run_merge,
@@ -300,6 +303,48 @@ def test_enabled_unavailable_diarization_fails_instead_of_silently_skipping(
         _run_diarize(tmp_path, manifest, config)
 
     assert manifest["stages"]["diarize"]["status"] == "failed"
+    assert manifest["stages"]["diarize"]["runtime"]["min_speakers"] == 2
+    assert manifest["stages"]["diarize"]["runtime"]["max_speakers"] is None
+
+
+def test_process_speaker_overrides_are_invocation_only() -> None:
+    config = MeetingNotesConfig(diarization={"num_speakers": 3, "max_speakers": 8})
+
+    overridden = _apply_speaker_overrides(
+        config,
+        num_speakers=None,
+        min_speakers=4,
+        max_speakers=10,
+    )
+
+    assert overridden.diarization.num_speakers is None
+    assert overridden.diarization.min_speakers == 4
+    assert overridden.diarization.max_speakers == 10
+    assert config.diarization.num_speakers == 3
+    assert config.diarization.max_speakers == 8
+
+
+def test_exact_speaker_override_cannot_be_combined_with_range() -> None:
+    with pytest.raises(typer.BadParameter, match="cannot be combined"):
+        _apply_speaker_overrides(
+            MeetingNotesConfig(),
+            num_speakers=4,
+            min_speakers=None,
+            max_speakers=10,
+        )
+
+
+def test_dry_run_reports_unbounded_speaker_policy(tmp_path: Path) -> None:
+    with patch("meeting_notes.pipeline.console") as console:
+        _print_dry_run(
+            MeetingNotesConfig(),
+            tmp_path / "meeting.wav",
+            tmp_path / "job",
+            ["prepare", "diarize"],
+        )
+
+    rendered = "\n".join(str(call.args[0]) for call in console.print.call_args_list if call.args)
+    assert "Speaker policy: automatic (min=2, max=unbounded)" in rendered
 
 
 def test_merge_reconstructs_diarization_turns_and_assigns_speakers(
@@ -387,9 +432,10 @@ def test_pyannote_uses_exclusive_diarization_when_available(tmp_path: Path) -> N
 
     received: dict[str, object] = {}
 
-    def fake_pipeline(audio: object, **_kwargs: object) -> Output:
+    def fake_pipeline(audio: object, **kwargs: object) -> Output:
         assert isinstance(audio, dict)
         received.update(audio)
+        received["params"] = kwargs
         return Output()
 
     backend = PyannoteDiarizationBackend(use_exclusive=True)
@@ -404,3 +450,42 @@ def test_pyannote_uses_exclusive_diarization_when_available(tmp_path: Path) -> N
         result = backend.diarize(audio)
     assert result.turns[0].speaker == "SPEAKER_00"
     assert received["sample_rate"] == 16000
+    assert received["params"] == {"min_speakers": 2}
+
+
+def test_pyannote_forwards_explicit_speaker_counts(tmp_path: Path) -> None:
+    class Turn:
+        def __init__(self, index: int) -> None:
+            self.start = float(index)
+            self.end = float(index + 1)
+
+    class Output:
+        def __init__(self) -> None:
+            self.exclusive_speaker_diarization = [
+                (Turn(index), f"SPEAKER_{index:02d}") for index in range(10)
+            ]
+            self.speaker_diarization: list[object] = []
+
+    calls: list[dict[str, object]] = []
+
+    def fake_pipeline(_audio: object, **kwargs: object) -> Output:
+        calls.append(kwargs)
+        return Output()
+
+    backend = PyannoteDiarizationBackend(use_exclusive=True)
+    backend._pipeline = fake_pipeline
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"wave")
+    with patch.object(
+        backend,
+        "_read_pcm_wave",
+        return_value={"waveform": object(), "sample_rate": 16000},
+    ):
+        result = backend.diarize(audio, min_speakers=2, max_speakers=12)
+        backend.diarize(audio, num_speakers=10, min_speakers=2, max_speakers=12)
+
+    assert calls == [
+        {"min_speakers": 2, "max_speakers": 12},
+        {"num_speakers": 10},
+    ]
+    assert len(result.speakers) == 10
