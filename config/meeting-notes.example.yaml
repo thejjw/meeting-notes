@@ -135,7 +135,10 @@ diarization:
   model: pyannote/speaker-diarization-community-1
   model_path: null
   token_env: HF_TOKEN
-  device: auto
+  # CPU is the safe default. Use rocm-hybrid only after `diarization setup`
+  # provisions and validates the project-local AMD runtime.
+  device: cpu
+  rocm_gpu_runtime_path: null
   num_speakers: null
   min_speakers: 2
   max_speakers: null

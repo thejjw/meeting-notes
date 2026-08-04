@@ -742,6 +742,7 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
         manifest["stages"]["diarize"]["runtime"] = {
             "backend": config.diarization.backend,
             "device": config.diarization.device,
+            "rocm_gpu_runtime_path": config.diarization.rocm_gpu_runtime_path,
             "model": config.diarization.model,
             "num_speakers": config.diarization.num_speakers,
             "min_speakers": config.diarization.min_speakers,
@@ -759,6 +760,11 @@ def _run_diarize(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -> d
                 ),
                 token_env=config.diarization.token_env,
                 device=config.diarization.device,
+                rocm_gpu_runtime_path=(
+                    Path(config.diarization.rocm_gpu_runtime_path)
+                    if config.diarization.rocm_gpu_runtime_path
+                    else None
+                ),
                 use_exclusive=config.diarization.use_exclusive_diarization,
             )
 

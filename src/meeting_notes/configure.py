@@ -59,6 +59,10 @@ def run_configure(
     if show_detected:
         diag = detect_system()
         console.print(format_diagnostics_table(diag))
+        from meeting_notes.diarization.acceleration import probe_rocm
+
+        rocm = probe_rocm(MeetingNotesConfig())
+        console.print(f"\nDiarization ROCm hybrid: {rocm.state}\n  {rocm.detail}")
         return
 
     if accept_defaults:
@@ -306,6 +310,25 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     # Step 4: Diarization
     console.print("\n[bold]Speaker diarization[/bold]\n")
     enable_diarization = typer.confirm("Enable speaker diarization?", default=False)
+    diarization_device = "cpu"
+    if enable_diarization:
+        from meeting_notes.diarization.acceleration import (
+            ROCM_INSTALLED_MIB,
+            probe_rocm,
+        )
+
+        rocm = probe_rocm(MeetingNotesConfig())
+        if rocm.state in {"eligible", "ready"}:
+            console.print(
+                f"[green]Optional AMD ROCm hybrid acceleration is {rocm.state}.[/green]\n"
+                f"  {rocm.detail}\n"
+                f"  Project-local storage: approximately "
+                f"{ROCM_INSTALLED_MIB / 1024:.1f} GiB"
+            )
+            if typer.confirm("Opt in to GPU-accelerated speaker embeddings?", default=False):
+                diarization_device = "rocm-hybrid"
+        elif rocm.state == "prerequisites-missing":
+            console.print(f"[dim]ROCm acceleration not ready: {rocm.detail}[/dim]")
 
     # Step 5: Summarization
     console.print("\n[bold]Summarization[/bold]\n")
@@ -349,6 +372,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
         asr=asr_config,
         diarization={
             "enabled": enable_diarization,
+            "device": diarization_device,
         },
         summarization={
             "enabled": enable_summarization,
@@ -383,6 +407,8 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     console.print(f"  Model: {config.asr.model}")
     console.print(f"  Language: {config.asr.language}")
     console.print(f"  Diarization: {'enabled' if config.diarization.enabled else 'disabled'}")
+    if config.diarization.enabled:
+        console.print(f"  Diarization device: {config.diarization.device}")
     console.print(f"  Summarization: {'enabled' if config.summarization.enabled else 'disabled'}")
     if config.summarization.enabled:
         if config.summarization.backend == "codex":
@@ -449,9 +475,15 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     else:
         _print_provisioning_commands(config, target)
     if config.diarization.enabled:
+        acceleration = config.diarization.device
         console.print(
-            "\nSpeaker diarization requires one guided browser authorization/download step:\n"
-            f'  uv run meeting-notes diarization setup --config "{target}"\n'
+            "\nSpeaker diarization requires dependency setup followed by one guided step:\n"
+            "  uv sync --extra diarization\n"
+            f"  uv run meeting-notes diarization setup --acceleration {acceleration} "
+            f'--config "{target}"\n'
+            "A portable backup can be used instead of Hugging Face login:\n"
+            f"  uv run meeting-notes diarization setup --acceleration {acceleration} "
+            f'--model-archive "<backup.zip>" --config "{target}"\n'
             "Then verify with:\n"
             f'  uv run meeting-notes doctor --config "{target}"'
         )
@@ -668,6 +700,14 @@ def config_status_cmd(config_path: str | None = None) -> None:
             console.print(f"  Backend: {config.runtime.asr_backend}")
             console.print(f"  Device: {config.runtime.device}")
             console.print(f"  Model: {config.asr.model}")
+            console.print(f"  Diarization device: {config.diarization.device}")
+            checks: dict[str, object] = {}
+            _add_diarization_checks(checks, config)
+            rocm = checks.get("rocm_probe")
+            if isinstance(rocm, dict):
+                console.print(f"  Diarization ROCm: {rocm.get('state')} ({rocm.get('detail')})")
+            for line in _diarization_recommendations(config, checks):
+                console.print(line)
         except ConfigValidationError as e:
             console.print(f"[yellow]Config invalid: {e}[/yellow]")
     else:
@@ -793,6 +833,10 @@ def _add_diarization_checks(
     checks: dict[str, object],
     config: MeetingNotesConfig,
 ) -> None:
+    from meeting_notes.diarization.acceleration import (
+        diarization_cache_root,
+        probe_rocm,
+    )
     from meeting_notes.diarization.setup import resolve_hf_token
 
     token, token_source = resolve_hf_token(config.diarization.token_env)
@@ -805,8 +849,10 @@ def _add_diarization_checks(
     except Exception:
         pyannote_installed = False
         pyannote_version = None
+    rocm = probe_rocm(config)
     checks.update(
         {
+            "diarization_device": config.diarization.device,
             "diarization_model": config.diarization.model,
             "diarization_model_path": str(model_path) if model_path else None,
             "local_diarization_model_ready": bool(model_path and model_path.exists()),
@@ -815,6 +861,9 @@ def _add_diarization_checks(
             "pyannote_version": pyannote_version,
             "hf_token_ready": bool(token),
             "hf_token_source": token_source,
+            "diarization_cache_root": str(diarization_cache_root(config)),
+            "rocm_gpu_runtime_path": config.diarization.rocm_gpu_runtime_path,
+            "rocm_probe": rocm.to_dict(),
         }
     )
 
@@ -867,6 +916,22 @@ def _diarization_recommendations(
                 "    uv run meeting-notes diarization setup",
                 "  Hugging Face requires you to accept gated-model conditions in your browser;",
                 "  meeting-notes cannot accept them on your behalf.",
+            ]
+        )
+    rocm = checks.get("rocm_probe")
+    rocm_state = rocm.get("state") if isinstance(rocm, dict) else None
+    if config.diarization.device == "cpu" and rocm_state in {"eligible", "ready"}:
+        lines.extend(
+            [
+                "  Optional AMD GPU embedding acceleration is available (CPU remains default):",
+                "    uv run meeting-notes diarization setup --acceleration rocm-hybrid",
+            ]
+        )
+    elif config.diarization.device == "rocm-hybrid" and rocm_state != "ready":
+        lines.extend(
+            [
+                "  The configured ROCm hybrid runtime is not ready:",
+                "    uv run meeting-notes diarization setup --acceleration rocm-hybrid",
             ]
         )
     if lines:
@@ -1073,10 +1138,18 @@ def run_doctor(
                 ready = configured["pyannote_installed"] and (
                     configured["hf_token_ready"] or configured["local_diarization_model_ready"]
                 )
+                rocm_check = configured.get("rocm_probe")
+                if configured.get("diarization_device") == "rocm-hybrid":
+                    ready = bool(
+                        ready
+                        and isinstance(rocm_check, dict)
+                        and rocm_check.get("state") == "ready"
+                    )
                 console.print(
                     f"  Diarization: "
                     f"{'[green]ready[/green]' if ready else '[yellow]not ready[/yellow]'}"
                 )
+                console.print(f"    Device: {configured['diarization_device']}")
                 dependency = (
                     f"installed ({configured['pyannote_version']})"
                     if configured["pyannote_installed"]
@@ -1099,6 +1172,11 @@ def run_doctor(
                     console.print(
                         f"    Local model: {local_status} ({configured['diarization_model_path']})"
                     )
+                rocm = configured.get("rocm_probe")
+                if isinstance(rocm, dict):
+                    console.print(f"    ROCm hybrid: {rocm.get('state')} ({rocm.get('detail')})")
+                    if rocm.get("runtime_path"):
+                        console.print(f"    ROCm runtime: {rocm.get('runtime_path')}")
         if smoke is not None:
             style = "green" if smoke["success"] else "red"
             console.print(f"\n  Smoke test: [{style}]{smoke['detail']}[/{style}]")

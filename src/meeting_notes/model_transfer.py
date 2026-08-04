@@ -17,7 +17,7 @@ from typing import Any, cast
 
 from meeting_notes.artifacts import MODEL_ARTIFACTS
 from meeting_notes.config import load_config, resolve_config_path, save_config
-from meeting_notes.diarization.setup import managed_diarization_dir
+from meeting_notes.diarization.acceleration import model_dir as managed_diarization_model_dir
 from meeting_notes.models import model_path, verify_model
 from meeting_notes.runtime import cache_root, sha256_file
 
@@ -419,7 +419,7 @@ def restore_archive(
             repo_id = str(model.get("repo_id", ""))
             if not repo_id or "/" not in repo_id:
                 raise ModelTransferError("Diarization archive has no valid repository ID.")
-            destination = managed_diarization_dir(repo_id)
+            destination = managed_diarization_model_dir(config, repo_id)
         else:
             raise ModelTransferError(f"Unsupported model archive kind: {kind}")
 

@@ -489,3 +489,44 @@ def test_pyannote_forwards_explicit_speaker_counts(tmp_path: Path) -> None:
         {"num_speakers": 10},
     ]
     assert len(result.speakers) == 10
+
+
+def test_pyannote_rocm_uses_managed_worker(tmp_path: Path) -> None:
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.yaml").write_text("pipeline: fixture", encoding="utf-8")
+    runtime = tmp_path / "runtime"
+    audio = tmp_path / "audio.wav"
+    audio.write_bytes(b"wave")
+    payload = {
+        "turns": [
+            {
+                "turn_id": "turn-000000",
+                "start": 0.0,
+                "end": 1.0,
+                "speaker": "SPEAKER_00",
+                "source": str(model),
+            }
+        ],
+        "speakers": ["SPEAKER_00"],
+        "model": str(model),
+    }
+    completed = type(
+        "Completed",
+        (),
+        {"returncode": 0, "stdout": json.dumps(payload), "stderr": ""},
+    )()
+    backend = PyannoteDiarizationBackend(
+        model_path=model,
+        device="rocm-hybrid",
+        rocm_gpu_runtime_path=runtime,
+    )
+    with (
+        patch("meeting_notes.diarization.pyannote.validate_runtime"),
+        patch("meeting_notes.diarization.pyannote.subprocess.run", return_value=completed) as run,
+    ):
+        result = backend.diarize(audio, min_speakers=2, max_speakers=10)
+    request = json.loads(run.call_args.kwargs["input"])
+    assert request["max_speakers"] == 10
+    assert result.device == "rocm-hybrid"
+    assert result.speakers == ["SPEAKER_00"]

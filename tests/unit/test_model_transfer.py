@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from meeting_notes.config import MeetingNotesConfig, SetupConfig, load_config, save_config
+from meeting_notes.diarization.setup import run_diarization_setup
 from meeting_notes.model_transfer import (
     MANIFEST_NAME,
     ModelTransferError,
@@ -153,8 +154,8 @@ def test_diarization_backup_excludes_hugging_face_metadata_and_restores_offline(
 
     destination = tmp_path / "restored-diarization"
     monkeypatch.setattr(
-        "meeting_notes.model_transfer.managed_diarization_dir",
-        lambda repo_id: destination,
+        "meeting_notes.model_transfer.managed_diarization_model_dir",
+        lambda config, repo_id: destination,
     )
     restored_path = restore_archive(
         "diarization", archive, config_path=str(config_path)
@@ -169,6 +170,39 @@ def test_diarization_backup_excludes_hugging_face_metadata_and_restores_offline(
     restored = load_config(str(config_path))
     assert restored.diarization.enabled is True
     assert restored.diarization.model_path == str(destination.resolve())
+
+
+def test_diarization_setup_accepts_offline_model_archive(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "source-model"
+    source.mkdir()
+    (source / "config.yaml").write_text("pipeline: fixture\n", encoding="utf-8")
+    (source / "weights.bin").write_bytes(b"weights")
+    config_path = _config(tmp_path / "config.yaml")
+    config = load_config(str(config_path))
+    config.project.cache_dir = str(tmp_path / "project-cache")
+    config.diarization.model = "pyannote/fixture"
+    config.diarization.model_path = str(source)
+    save_config(config, config_path)
+    archive, _ = backup_diarization(
+        config_path=str(config_path), archive_path=tmp_path / "backup.zip"
+    )
+    config.diarization.model_path = None
+    save_config(config, config_path)
+
+    monkeypatch.setattr("meeting_notes.diarization.setup.version", lambda name: "4.0.7")
+    run_diarization_setup(
+        config_path=str(config_path), model_archive=archive, acceleration="cpu", yes=True
+    )
+
+    restored = load_config(str(config_path))
+    expected = (
+        tmp_path / "project-cache" / "diarization" / "models" / "pyannote--fixture"
+    ).resolve()
+    assert restored.diarization.model_path == str(expected)
+    assert restored.diarization.device == "cpu"
+    assert (expected / "weights.bin").read_bytes() == b"weights"
 
 
 def test_restore_rejects_sidecar_mismatch(

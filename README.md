@@ -245,7 +245,9 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes config [show/status/edit/reset]` | Display, inspect, edit, or reset application configuration |
 | `meeting-notes models [list/status/info/download/verify]` | List, check, download, or verify Whisper model integrity |
 | `meeting-notes runtime [status/install]` | Check runtime status or install whisper.cpp CPU/Vulkan binaries |
-| `meeting-notes diarization setup` | Guided setup and download for pyannote speaker diarization |
+| `meeting-notes diarization setup` | Provision Community-1 from Hugging Face or a portable backup, with optional ROCm acceleration |
+| `meeting-notes diarization status` | Show model/runtime readiness and total project-local storage |
+| `meeting-notes diarization remove-runtime` | Remove the project-local ROCm runtime and return diarization to CPU |
 | `meeting-notes naming [preview/finalize]` | Preview or finalize output file naming |
 | `meeting-notes resources show` | Display memory and resource allocation estimates |
 | `meeting-notes summarizers test` | Test summarizer adapter configuration with a test prompt |
@@ -697,7 +699,9 @@ command is run. With the example defaults, the workspace contains:
 | `./data/meetings/<job>/summary/` | Current structured JSON or local Markdown summary |
 | `./data/meetings/<job>/output/` | Current minutes, publication generations, and compact run reports |
 | `./data/meetings/<job>/logs/` | Retained tool or build logs when produced |
-| `./cache/` and `./cache/models/` | Project-configured caches and model files |
+| `./cache/` and `./cache/models/` | Project-configured caches and Whisper model files |
+| `./cache/diarization/models/` | Project-local Community-1 model snapshots |
+| `./cache/diarization/runtimes/` | Optional project-local ROCm Python runtime (about 6.1 GiB) |
 
 The job root also retains `manifest.json`, `speakers.yaml`, and speaker-template
 backups. The manifest contains paths, timestamps, checksums, configuration
@@ -744,8 +748,8 @@ is intentionally disposable.
 |----------|----------|----------|
 | Windows | `%APPDATA%\meeting-notes\config.yaml` | User configuration |
 | Linux | `${XDG_CONFIG_HOME:-~/.config}/meeting-notes/config.yaml` | User configuration |
-| Windows | `%LOCALAPPDATA%\meeting-notes\cache\` | Managed whisper.cpp runtimes, downloads, build logs, and managed diarization models |
-| Linux | `${XDG_CACHE_HOME:-~/.cache}/meeting-notes/` | The same managed cache |
+| Windows | `%LOCALAPPDATA%\meeting-notes\cache\` | Managed whisper.cpp runtimes, downloads, and build logs |
+| Linux | `${XDG_CACHE_HOME:-~/.cache}/meeting-notes/` | The same whisper.cpp managed cache |
 | All | `~/.cache/silero-vad/` | Silero VAD model when that backend downloads it |
 
 An explicit `--config`, `MEETING_NOTES_CONFIG`, or project-local
@@ -787,10 +791,66 @@ uv run meeting-notes doctor
 
 The setup command uses Hugging Face's browser device-login flow, opens the
 Community-1 conditions page when approval is still needed, downloads the model
-to the managed cache, and writes its local path to configuration. Users must
+under `./cache/diarization/models/`, and writes its absolute path to configuration.
+Users must
 personally accept gated-model conditions in the browser; the application cannot
 accept them on their behalf. No manual `HF_TOKEN` environment variable is
 required.
+
+CPU is the only default diarization device. The removed `auto` value is invalid;
+existing configurations must change it to `cpu`, `rocm-hybrid`, or `cuda`.
+`configure`, `config status`, and `doctor` probe for optional native-Windows AMD
+acceleration and print an opt-in command when the prerequisites are available.
+
+### Optional AMD ROCm hybrid acceleration
+
+On supported Windows 11 AMD hardware, first install the driver/HIP prerequisites
+from AMD and install the normal diarization extra. Then explicitly provision the
+project-local runtime:
+
+```powershell
+uv sync --extra diarization
+uv run meeting-notes diarization setup --acceleration rocm-hybrid
+uv run meeting-notes diarization status
+```
+
+Setup displays the destination, available disk space, approximately 2.1 GiB of
+downloads, approximately 6.1 GiB installed size, and a 9 GiB peak free-space
+requirement before continuing. The confirmation defaults to yes; use `--yes` for
+non-interactive provisioning. Failed staging installs are removed. The accelerated
+worker deliberately keeps segmentation and clustering on CPU and moves only
+speaker embeddings to the AMD GPU in FP32. It does not silently fall back to CPU.
+The managed environment is pinned to pyannote.audio 4.0.7 and AMD's Windows
+PyTorch 2.9.1+rocm7.2.1 packages, and readiness checks enforce both versions.
+
+AMD's supported Windows PyTorch instructions and prerequisites are maintained at
+<https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installryz/windows/install-pytorch.html>.
+Automated provisioning in meeting-notes currently supports native Windows only.
+
+To reclaim the runtime storage while keeping the model, run:
+
+```powershell
+uv run meeting-notes diarization remove-runtime
+```
+
+This changes `diarization.device` to `cpu` and clears
+`diarization.rocm_gpu_runtime_path`.
+
+### Offline setup from a model backup
+
+A portable backup satisfies the gated-model requirement without logging in on the
+destination computer:
+
+```powershell
+uv run meeting-notes diarization setup `
+  --model-archive "D:\Transfer\meeting-notes-diarization-community-1.zip" `
+  --acceleration rocm-hybrid
+```
+
+The archive sidecar is checked when present and every payload file is always
+verified against the checksum inventory stored in the archive. Runtime packages and
+credentials are never restored from a model backup. An already-restored valid
+model is also detected and reused by a later setup command.
 
 After `doctor` reports diarization as ready, resume an existing transcription
 without rerunning ASR:
@@ -853,6 +913,10 @@ uv sync --extra diarization
 .\scripts\transfer-diarization-model-windows.ps1 -Action Restore -Archive D:\Transfer\meeting-notes-diarization-model.zip
 uv run meeting-notes doctor
 ```
+
+Alternatively, pass the diarization archive directly to `meeting-notes
+diarization setup --model-archive ...`; this restores the model into the project
+cache and provisions the selected CPU or ROCm execution path in one flow.
 
 Pass `-Config PATH` when the configuration is not at the normal per-user
 location. Restore refuses to replace an installed destination unless `-Force`

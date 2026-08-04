@@ -5,6 +5,11 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Project-local native-Windows ROCm hybrid diarization: CPU segmentation and
+  clustering with AMD GPU speaker embeddings in an isolated managed runtime.
+- `diarization status`, `diarization remove-runtime`, and
+  `diarization setup --model-archive/--acceleration` management flows.
+- Direct, checksum-verified Community-1 backup restore during diarization setup.
 - `process --num-speakers`, `--min-speakers`, and `--max-speakers` invocation-only
   controls for exact or bounded speaker diarization.
 - `meeting-notes clean JOB_DIR --final-only` - preview and transactionally reduce a
@@ -28,6 +33,10 @@ All notable changes to meeting-notes will be documented in this file.
   "no timing history yet" until a matching job has completed once.
 
 ### Changed
+- CPU is now the explicit diarization default. The ambiguous `device: auto`
+  configuration is rejected with migration guidance.
+- Managed diarization models and ROCm environments now live together under the
+  project `cache/diarization/` tree, with storage estimates shown before provisioning.
 - Local Community-1 diarization no longer imposes an eight-speaker maximum by
   default; `max_speakers: null` leaves automatic speaker counting unbounded.
 - Diarization runtime metadata and `process --dry-run` now report the effective

@@ -30,6 +30,7 @@ desktop.ini
 
 # Models (large binaries, never commit)
 cache/models/
+cache/diarization/
 *.bin
 *.gguf
 *.pt

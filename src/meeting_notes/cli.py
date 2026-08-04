@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Annotated
 
 import typer
@@ -261,18 +262,60 @@ app.add_typer(diarization_app, name="diarization")
 @diarization_app.command("setup")
 def diarization_setup(
     config_path: Annotated[str | None, typer.Option("--config")] = None,
-    yes: Annotated[bool, typer.Option("--yes", "-y", help="Confirm model download.")] = False,
+    acceleration: Annotated[
+        str | None,
+        typer.Option("--acceleration", help="cpu or rocm-hybrid; defaults to config."),
+    ] = None,
+    model_archive: Annotated[
+        str | None,
+        typer.Option("--model-archive", help="Verified portable diarization ZIP."),
+    ] = None,
+    yes: Annotated[
+        bool, typer.Option("--yes", "-y", help="Confirm large storage and downloads.")
+    ] = False,
     force: Annotated[
         bool, typer.Option("--force", help="Redownload an existing managed pipeline.")
     ] = False,
 ) -> None:
-    """Authenticate in a browser and provision the selected diarization model."""
+    """Provision the diarization model and optional project-local ROCm runtime."""
     from meeting_notes.diarization.setup import run_diarization_setup
 
     try:
-        run_diarization_setup(config_path=config_path, yes=yes, force=force)
+        run_diarization_setup(
+            config_path=config_path,
+            yes=yes,
+            force=force,
+            acceleration=acceleration,
+            model_archive=Path(model_archive) if model_archive else None,
+        )
     except RuntimeError as error:
         console.print(f"[red]Diarization setup failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
+@diarization_app.command("status")
+def diarization_status(
+    output_json: Annotated[bool, typer.Option("--json")] = False,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+) -> None:
+    """Show model, project-local storage, and ROCm readiness."""
+    from meeting_notes.diarization.setup import run_diarization_status
+
+    run_diarization_status(config_path=config_path, output_json=output_json)
+
+
+@diarization_app.command("remove-runtime")
+def diarization_remove_runtime(
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+    yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
+) -> None:
+    """Remove the project-local ROCm runtime and select CPU diarization."""
+    from meeting_notes.diarization.setup import run_diarization_runtime_remove
+
+    try:
+        run_diarization_runtime_remove(config_path=config_path, yes=yes)
+    except RuntimeError as error:
+        console.print(f"[red]Diarization runtime removal failed:[/red] {error}")
         raise typer.Exit(1) from error
 
 

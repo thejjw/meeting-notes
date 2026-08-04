@@ -2,21 +2,25 @@
 
 from __future__ import annotations
 
+import json
+import subprocess
 import warnings
 import wave
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import structlog
 
+from meeting_notes.diarization.acceleration import (
+    runtime_environment,
+    runtime_python,
+    validate_runtime,
+)
 from meeting_notes.diarization.base import (
     DiarizationBackend,
     DiarizationResult,
     DiarizationTurn,
 )
 from meeting_notes.diarization.setup import resolve_hf_token
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 log = structlog.get_logger()
 
@@ -33,13 +37,15 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         model_name: str = "pyannote/speaker-diarization-community-1",
         model_path: Path | None = None,
         token_env: str = "HF_TOKEN",
-        device: str = "auto",
+        device: str = "cpu",
+        rocm_gpu_runtime_path: Path | None = None,
         use_exclusive: bool = True,
     ) -> None:
         self._model_name = model_name
         self._model_path = model_path
         self._token_env = token_env
         self._device = device
+        self._rocm_gpu_runtime_path = rocm_gpu_runtime_path
         self._use_exclusive = use_exclusive
         self._pipeline = None
 
@@ -55,6 +61,13 @@ class PyannoteDiarizationBackend(DiarizationBackend):
     def is_available(self) -> bool:
         """Check if pyannote.audio is installed and HF token is set."""
         try:
+            if self._device == "rocm-hybrid":
+                if not self._model_path or not (self._model_path / "config.yaml").is_file():
+                    return False
+                if not self._rocm_gpu_runtime_path:
+                    return False
+                validate_runtime(self._rocm_gpu_runtime_path)
+                return True
             from importlib.metadata import version
 
             version("pyannote.audio")
@@ -75,6 +88,8 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         """Lazy-load the pyannote pipeline."""
         if self._pipeline is not None:
             return
+        if self._device == "rocm-hybrid":
+            raise RuntimeError("ROCm hybrid diarization must run through the managed worker.")
 
         with warnings.catch_warnings():
             # The application supplies decoded waveform tensors, so pyannote's
@@ -106,8 +121,58 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         else:
             self._pipeline = Pipeline.from_pretrained(self._model_name, token=token)
 
-        if self._device != "auto":
-            self._pipeline.to(self._device)
+        import torch
+
+        self._pipeline.to(torch.device(self._device))
+
+    def _diarize_rocm(
+        self,
+        audio_path: Path,
+        *,
+        num_speakers: int | None,
+        min_speakers: int,
+        max_speakers: int | None,
+    ) -> DiarizationResult:
+        """Run Community-1 in the isolated CPU-segmentation/GPU-embedding worker."""
+        if not self._model_path or not (self._model_path / "config.yaml").is_file():
+            raise RuntimeError("ROCm hybrid diarization requires a configured local model.")
+        if not self._rocm_gpu_runtime_path:
+            raise RuntimeError("rocm_gpu_runtime_path is not configured.")
+        validate_runtime(self._rocm_gpu_runtime_path)
+        request = {
+            "audio_path": str(audio_path.resolve()),
+            "model_path": str(self._model_path.resolve()),
+            "use_exclusive": self._use_exclusive,
+            "num_speakers": num_speakers,
+            "min_speakers": min_speakers,
+            "max_speakers": max_speakers,
+        }
+        worker = Path(__file__).with_name("worker.py")
+        result = subprocess.run(
+            [str(runtime_python(self._rocm_gpu_runtime_path)), str(worker)],
+            input=json.dumps(request),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=runtime_environment(self._rocm_gpu_runtime_path),
+            check=False,
+        )
+        if result.returncode:
+            detail = (result.stderr or result.stdout).strip()[-2000:]
+            raise RuntimeError(f"ROCm hybrid diarization failed: {detail}")
+        try:
+            payload = json.loads(result.stdout.strip().splitlines()[-1])
+        except (json.JSONDecodeError, IndexError) as error:
+            raise RuntimeError("ROCm hybrid worker returned invalid JSON.") from error
+        turns = [DiarizationTurn(**turn) for turn in payload.get("turns", [])]
+        return DiarizationResult(
+            turns=turns,
+            backend="pyannote",
+            model=str(payload.get("model", self.model_source)),
+            device="rocm-hybrid",
+            speakers=[str(value) for value in payload.get("speakers", [])],
+        )
 
     def diarize(
         self,
@@ -120,6 +185,14 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         """Run pyannote speaker diarization."""
         if not audio_path.exists():
             raise FileNotFoundError(f"Audio file not found: {audio_path}")
+
+        if self._device == "rocm-hybrid":
+            return self._diarize_rocm(
+                audio_path,
+                num_speakers=num_speakers,
+                min_speakers=min_speakers,
+                max_speakers=max_speakers,
+            )
 
         self._load_pipeline()
         assert self._pipeline is not None

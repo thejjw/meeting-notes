@@ -38,12 +38,24 @@ class TestConfigModels:
         assert config.asr.language == "ko"
         assert config.diarization.min_speakers == 2
         assert config.diarization.max_speakers is None
+        assert config.diarization.device == "cpu"
+        assert config.diarization.rocm_gpu_runtime_path is None
 
     def test_diarization_speaker_counts_are_validated(self) -> None:
         with pytest.raises(ValueError, match="greater than or equal to 1"):
             DiarizationConfig(num_speakers=0)
         with pytest.raises(ValueError, match="min_speakers must be less"):
             DiarizationConfig(min_speakers=5, max_speakers=4)
+
+    def test_diarization_device_must_be_explicit(self) -> None:
+        with pytest.raises(ValueError, match=r"auto.*no longer supported"):
+            DiarizationConfig(device="auto")  # type: ignore[arg-type]
+
+    def test_rocm_runtime_path_requires_hybrid_device(self) -> None:
+        with pytest.raises(ValueError, match="only valid"):
+            DiarizationConfig(device="cpu", rocm_gpu_runtime_path="runtime")
+        config = DiarizationConfig(device="rocm-hybrid", rocm_gpu_runtime_path="runtime")
+        assert config.rocm_gpu_runtime_path == "runtime"
 
     def test_config_from_dict(self) -> None:
         data = {

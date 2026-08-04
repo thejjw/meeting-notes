@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # OS-specific default config locations
 
@@ -217,7 +217,8 @@ class DiarizationConfig(BaseModel):
     model: str = "pyannote/speaker-diarization-community-1"
     model_path: str | None = None
     token_env: str = "HF_TOKEN"
-    device: str = "auto"
+    device: Literal["cpu", "rocm-hybrid", "cuda"] = "cpu"
+    rocm_gpu_runtime_path: str | None = None
     num_speakers: int | None = Field(default=None, ge=1)
     min_speakers: int = Field(default=2, ge=1)
     max_speakers: int | None = Field(default=None, ge=1)
@@ -228,6 +229,26 @@ class DiarizationConfig(BaseModel):
     unknown_speaker_label: str = "UNKNOWN"
     speaker_map_path: str | None = None
     write_rttm: bool = True
+
+    @field_validator("device", mode="before")
+    @classmethod
+    def reject_legacy_auto_device(cls, value: object) -> object:
+        """Require an explicit diarization execution device."""
+        if value == "auto":
+            raise ValueError(
+                "diarization.device 'auto' is no longer supported; choose "
+                "'cpu', 'rocm-hybrid', or 'cuda'"
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_runtime_path(self) -> DiarizationConfig:
+        """Only the managed ROCm worker uses a separate Python runtime."""
+        if self.device != "rocm-hybrid" and self.rocm_gpu_runtime_path is not None:
+            raise ValueError(
+                "rocm_gpu_runtime_path is only valid when diarization.device is 'rocm-hybrid'"
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_speaker_bounds(self) -> DiarizationConfig:

@@ -28,7 +28,16 @@ if ($Archive) { $Arguments += @("--archive", $Archive) }
 if ($Config) { $Arguments += @("--config", $Config) }
 if ($Force) { $Arguments += "--force" }
 
-& uv @Arguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Diarization model $($Action.ToLowerInvariant()) failed with exit code $LASTEXITCODE."
+# Relative project.cache_dir values must resolve under the repository even when
+# this helper is launched from another directory.
+Push-Location -LiteralPath $RepositoryRoot
+try {
+    & uv @Arguments
+    $TransferExitCode = $LASTEXITCODE
+}
+finally {
+    Pop-Location
+}
+if ($TransferExitCode -ne 0) {
+    throw "Diarization model $($Action.ToLowerInvariant()) failed with exit code $TransferExitCode."
 }
