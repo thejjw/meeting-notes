@@ -5,6 +5,9 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Dedicated architecture and performance documentation, including controlled
+  CPU/NPU/Vulkan/Qwen measurements from the AMD validation machine and an
+  ROCm-hybrid diarization comparison against the CPU baseline.
 - Experimental opt-in Qwen3-ASR 1.7B Q8 backend using Lemonade llama.cpp Vulkan
   by default, the project-local ROCm official 0.6B forced aligner, and no CPU fallback.
 - `asr setup/status` provisioning and a Qwen feasibility benchmark matrix with

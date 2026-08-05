@@ -14,6 +14,13 @@ from typing import Any
 _WORKER_DIRECTORY = Path(__file__).resolve().parent
 if sys.path and Path(sys.path[0]).resolve() == _WORKER_DIRECTORY:
     sys.path.pop(0)
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+if str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
+
+from meeting_notes.rocm_compat import (  # noqa: E402
+    install_windows_rocm_transformers_compatibility,
+)
 
 
 def _read_pcm_wave(audio_path: Path) -> dict[str, object]:
@@ -39,6 +46,8 @@ def _read_pcm_wave(audio_path: Path) -> dict[str, object]:
 def run(request: dict[str, Any]) -> dict[str, Any]:
     """Execute one hybrid diarization request."""
     import torch
+
+    install_windows_rocm_transformers_compatibility(torch)
 
     with warnings.catch_warnings():
         warnings.filterwarnings(

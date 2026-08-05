@@ -152,6 +152,7 @@ def test_readiness_rejects_non_vulkan_lemonade_load(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     backend = _backend(tmp_path)
+    monkeypatch.setattr(backend, "_validate_alignment_runtime", lambda: None)
     monkeypatch.setattr(backend, "is_available", lambda: True)
     monkeypatch.setattr(
         backend,

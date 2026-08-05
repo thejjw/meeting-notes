@@ -48,6 +48,15 @@ class PyannoteDiarizationBackend(DiarizationBackend):
         self._rocm_gpu_runtime_path = rocm_gpu_runtime_path
         self._use_exclusive = use_exclusive
         self._pipeline = None
+        self._runtime_validated = False
+
+    def _validate_rocm_runtime(self) -> None:
+        if self._runtime_validated:
+            return
+        if not self._rocm_gpu_runtime_path:
+            raise RuntimeError("rocm_gpu_runtime_path is not configured.")
+        validate_runtime(self._rocm_gpu_runtime_path)
+        self._runtime_validated = True
 
     @property
     def name(self) -> str:
@@ -66,7 +75,7 @@ class PyannoteDiarizationBackend(DiarizationBackend):
                     return False
                 if not self._rocm_gpu_runtime_path:
                     return False
-                validate_runtime(self._rocm_gpu_runtime_path)
+                self._validate_rocm_runtime()
                 return True
             from importlib.metadata import version
 
@@ -138,7 +147,7 @@ class PyannoteDiarizationBackend(DiarizationBackend):
             raise RuntimeError("ROCm hybrid diarization requires a configured local model.")
         if not self._rocm_gpu_runtime_path:
             raise RuntimeError("rocm_gpu_runtime_path is not configured.")
-        validate_runtime(self._rocm_gpu_runtime_path)
+        self._validate_rocm_runtime()
         request = {
             "audio_path": str(audio_path.resolve()),
             "model_path": str(self._model_path.resolve()),

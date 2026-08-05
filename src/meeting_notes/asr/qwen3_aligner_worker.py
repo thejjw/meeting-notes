@@ -1,7 +1,7 @@
 """Isolated Qwen3 forced-alignment worker for the managed ROCm runtime.
 
-This file intentionally imports no meeting_notes modules so the project-managed
-native-Windows ROCm environment can execute it directly.
+This file imports only the project's pure-stdlib ROCm compatibility helper so
+the project-managed native-Windows ROCm environment can execute it directly.
 """
 
 # Qwen's processor methods are dynamic custom APIs supplied by Transformers.
@@ -14,9 +14,16 @@ import sys
 import threading
 import time
 import traceback
-import types
 from pathlib import Path
 from typing import Any
+
+_SOURCE_ROOT = Path(__file__).resolve().parents[2]
+if str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
+
+from meeting_notes.rocm_compat import (  # noqa: E402
+    install_windows_rocm_transformers_compatibility,
+)
 
 
 def _memory_sampler(stop: threading.Event, peak: list[int]) -> None:
@@ -27,31 +34,6 @@ def _memory_sampler(stop: threading.Event, peak: list[int]) -> None:
     process = psutil.Process()
     while not stop.wait(0.05):
         peak[0] = max(peak[0], process.memory_info().rss)
-
-
-def _install_windows_rocm_transformers_compatibility(torch: Any) -> None:
-    """Hide distributed APIs absent from AMD's native-Windows torch build."""
-    if torch.distributed.is_available():
-        return
-
-    fsdp = types.ModuleType("transformers.distributed.fsdp")
-    fsdp.is_fsdp_managed_module = lambda _module: False
-    fsdp.is_fsdp_enabled = lambda: False
-    fsdp.get_fsdp_ckpt_kwargs = lambda: {}
-    fsdp.update_fsdp_plugin_peft = lambda *_args, **_kwargs: None
-    sys.modules[fsdp.__name__] = fsdp
-
-    sharding = types.ModuleType("transformers.distributed.sharding_utils")
-
-    class DtensorShardOperation:
-        pass
-
-    def distributed_tensors_unavailable(*_args: Any, **_kwargs: Any) -> None:
-        raise RuntimeError("Distributed tensors are unavailable in this PyTorch build.")
-
-    sharding.DtensorShardOperation = DtensorShardOperation
-    sharding._dtensor_from_local_like = distributed_tensors_unavailable
-    sys.modules[sharding.__name__] = sharding
 
 
 def _load_audio(path: str) -> Any:
@@ -68,7 +50,7 @@ def _load_audio(path: str) -> Any:
 def _run(request: dict[str, Any]) -> dict[str, Any]:
     import torch
 
-    _install_windows_rocm_transformers_compatibility(torch)
+    install_windows_rocm_transformers_compatibility(torch)
     from transformers import AutoModelForTokenClassification, AutoProcessor
 
     if not torch.distributed.is_available():

@@ -17,6 +17,7 @@ from meeting_notes.diarization.acceleration import (
     ROCM_TORCH_VERSION,
     RocmRuntimeError,
     _migrate_runtime_manifest,
+    _profile_packages,
     default_runtime_dir,
     diarization_cache_root,
     directory_size,
@@ -25,6 +26,7 @@ from meeting_notes.diarization.acceleration import (
     runtime_environment,
     validate_runtime,
 )
+from meeting_notes.rocm_compat import install_windows_rocm_transformers_compatibility
 
 
 def _config(tmp_path: Path) -> MeetingNotesConfig:
@@ -61,6 +63,13 @@ def test_runtime_environment_isolates_managed_venv(
     assert env["PYTHONNOUSERSITE"] == "1"
     assert env["VIRTUAL_ENV"] == str(runtime.resolve())
     assert env["PATH"].split(os.pathsep)[0] == str(runtime.resolve() / "Scripts")
+
+
+def test_qwen_packages_are_only_added_for_alignment_profile() -> None:
+    assert _profile_packages(("diarization",)) == ()
+    packages = _profile_packages(("diarization", "qwen3_alignment"))
+    assert any(package.startswith("transformers") for package in packages)
+    assert "soynlp" in packages
 
 
 def test_worker_does_not_shadow_third_party_pyannote(tmp_path: Path) -> None:
@@ -132,6 +141,53 @@ def test_validate_runtime_requires_expected_torch(tmp_path: Path) -> None:
     result.stdout = json.dumps(payload)
     with patch("meeting_notes.diarization.acceleration.subprocess.run", return_value=result):
         assert validate_runtime(runtime)["device"] == "AMD"
+
+
+def test_validate_runtime_probes_requested_profile_imports(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    python = runtime / "Scripts" / "python.exe"
+    python.parent.mkdir(parents=True)
+    python.touch()
+    payload = {
+        "available": True,
+        "torch": ROCM_TORCH_VERSION,
+        "hip": "7.2",
+        "pyannote": ROCM_PYANNOTE_VERSION,
+        "transformers": "5.14.1",
+        "soynlp": "0.0.493",
+        "device": "AMD",
+    }
+    result = type(
+        "Result", (), {"returncode": 0, "stdout": json.dumps(payload), "stderr": ""}
+    )()
+    with patch(
+        "meeting_notes.diarization.acceleration.subprocess.run", return_value=result
+    ) as run:
+        validate_runtime(runtime, required_profiles=("diarization", "qwen3_alignment"))
+
+    script = run.call_args.args[0][2]
+    assert "from pyannote.audio import Pipeline" in script
+    assert "AutoModelForTokenClassification, AutoProcessor" in script
+    assert "install_compat(torch)" in script
+
+
+def test_rocm_transformers_compatibility_stubs_missing_distributed_modules() -> None:
+    fake_torch = type("Torch", (), {})()
+    module_names = (
+        "transformers.distributed.fsdp",
+        "transformers.distributed.sharding_utils",
+    )
+    original = {name: sys.modules.get(name) for name in module_names}
+    try:
+        install_windows_rocm_transformers_compatibility(fake_torch)
+        assert sys.modules[module_names[0]].is_fsdp_enabled() is False
+        assert hasattr(sys.modules[module_names[1]], "DtensorShardOperation")
+    finally:
+        for name, module in original.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
 
 
 def test_qwen_runtime_profile_is_migrated_without_reinstall(tmp_path: Path) -> None:

@@ -20,6 +20,15 @@ Takes a recorded meeting audio/video file and produces:
 3. **Summary JSON** — machine-readable meeting data
 4. **Finalized Recording** — copy with date/topic filename
 
+## Documentation
+
+- [Architecture](docs/architecture.md) — how transcription, diarization, and
+  summarization fit together; engine/device choices; fallback semantics; and
+  privacy boundaries.
+- [Performance](docs/performance.md) — controlled CPU, NPU, Vulkan, Qwen, and
+  diarization measurements from the current AMD validation machine.
+- [Documentation index](docs/README.md)
+
 ## Quick Start
 
 ```bash
@@ -520,11 +529,8 @@ backend cannot be confused. ROCm is intentionally not offered for Lemonade
 transcription. The portable slow baseline remains the default local
 `whisper_cpp` backend with `runtime.device: cpu`.
 
-On this project's Ryzen AI Max+ 395 validation machine, a repeated 240-second
-Korean clip took about 13.2 seconds with Vulkan (18.2x real time) and 30.3 seconds
-with NPU (7.9x real time). Treat those as machine-specific speed measurements,
-not an accuracy guarantee; the generated transcripts differed and should be
-compared on representative recordings.
+See [Performance measurements](docs/performance.md) for a controlled comparison
+against local CPU Whisper and for the output-quality caveats.
 
 Useful verification and provisioning commands:
 
@@ -597,33 +603,9 @@ code-switching within a chunk remains a model limitation. Qwen3-ASR recognizes
 assignment. In auto mode, an unsupported detected language produces an actionable
 error and suggests using Whisper instead of silently returning untimestamped text.
 
-To benchmark Whisper/NPU and Qwen/GPU on the first ten minutes of a recording:
-
-```powershell
-uv run meeting-notes benchmark "meeting.m4a" `
-  --matrix config/qwen3-asr-benchmark.example.yaml `
-  --start-seconds 0 --duration-seconds 600
-```
-
-The benchmark records cold load and end-to-end timing, RTF, memory data, and a
-separate transcript artifact for every run. Qwen alignment chunks are capped at
-four minutes, below the forced aligner's five-minute limit. Aligned words, rather
-than whole segments, are assigned at overlap boundaries so chunk merging does not
-repeat speech.
-
-The current Ryzen AI Max+ 395 / Radeon 8060S environment produced these results:
-
-| Backend/device | Time | RTF | Speed | Observed peak memory |
-|---|---:|---:|---:|---:|
-| Lemonade Whisper/NPU | 65.3 s | 0.109 | 9.18x real time | server memory not included |
-| Qwen first-ever GPU run | 101.4 s / 240 s | 0.422 | 2.37x real time | includes ROCm kernel warm-up |
-| Qwen subsequent fresh worker | 29.8 s / 240 s | 0.124 | 8.04x real time | 5.1 GiB alignment allocation |
-
-The first forced-alignment run spent most of its time warming ROCm kernels. A later
-fresh worker transcribed in 15.3 seconds and reported 6.2 seconds of alignment,
-with process startup and synchronization accounting for the remainder. The sample
-suggested fewer Whisper-style repetitions, but it has no reference transcript, so
-compare retained artifacts before drawing quality conclusions.
+Controlled and longer-recording Qwen/Whisper measurements, including the
+benchmark command and accuracy caveats, now live in
+[Performance measurements](docs/performance.md).
 
 ## Summarization Backends
 
@@ -920,6 +902,11 @@ existing configurations must change it to `cpu`, `rocm-hybrid`, or `cuda`.
 acceleration and print an opt-in command when the prerequisites are available.
 
 ### Optional AMD ROCm hybrid acceleration
+
+Architecture and device responsibilities are summarized in
+[Architecture](docs/architecture.md). Current CPU timing and the known shared
+Qwen/pyannote runtime measurements are recorded in
+[Performance measurements](docs/performance.md#controlled-240-second-diarization-comparison).
 
 On supported Windows 11 AMD hardware, first install the driver/HIP prerequisites
 from AMD and install the normal diarization extra. Then explicitly provision the

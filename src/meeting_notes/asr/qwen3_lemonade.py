@@ -20,6 +20,7 @@ from urllib.parse import quote
 import httpx
 
 from meeting_notes.asr.base import ASRBackend, ASRReadiness, ASRResult, ASRSegment
+from meeting_notes.diarization.acceleration import RocmRuntimeError, validate_runtime
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -172,6 +173,15 @@ class Qwen3ASRLemonadeBackend(ASRBackend):
         self.environment = environment
         self._version = ""
         self._resolved_model_id = model_id
+        self._runtime_validated = False
+
+    def _validate_alignment_runtime(self) -> None:
+        if self._runtime_validated:
+            return
+        executable = Path(self.python_executable).resolve()
+        runtime = executable.parent.parent
+        validate_runtime(runtime, required_profiles=("qwen3_alignment",))
+        self._runtime_validated = True
 
     @property
     def name(self) -> str:
@@ -359,6 +369,15 @@ class Qwen3ASRLemonadeBackend(ASRBackend):
             )
         if not (self.aligner_path / "config.json").is_file():
             return ASRReadiness(False, f"Qwen forced aligner is missing: {self.aligner_path}")
+        try:
+            self._validate_alignment_runtime()
+        except RocmRuntimeError as error:
+            return ASRReadiness(
+                False,
+                f"Qwen alignment runtime is not ready: {error}",
+                device=self.accelerator_device,
+                metadata=metadata,
+            )
         if not self.is_available():
             return ASRReadiness(
                 False,

@@ -12,7 +12,7 @@ import tempfile
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 from meeting_notes.storage import directory_size, project_cache_root
 
@@ -55,6 +55,19 @@ ROCM_PACKAGES = (
         "62835605995c7812a3224733abf08e222afddb7a487c493521e613ca46e578ab",
     ),
 )
+
+_QWEN_ALIGNMENT_PACKAGES = (
+    ROCM_TRANSFORMERS_SPEC,
+    "accelerate",
+    "librosa",
+    "soundfile",
+    "soynlp",
+)
+
+
+def _profile_packages(profiles: tuple[str, ...]) -> tuple[str, ...]:
+    """Return optional packages required by the selected runtime profiles."""
+    return _QWEN_ALIGNMENT_PACKAGES if "qwen3_alignment" in profiles else ()
 
 
 class RocmRuntimeError(RuntimeError):
@@ -161,12 +174,26 @@ def validate_runtime(
     *,
     required_profiles: tuple[str, ...] = ("diarization",),
 ) -> dict[str, object]:
-    """Validate PyTorch/HIP in a managed runtime and return its identity."""
+    """Validate PyTorch/HIP and import each requested runtime profile."""
     python = runtime_python(runtime)
     if not python.is_file():
         raise RocmRuntimeError(f"Managed ROCm Python is missing: {python}")
+    source_root = Path(__file__).resolve().parents[2]
+    profile_imports: list[str] = []
+    if "diarization" in required_profiles:
+        profile_imports.append("from pyannote.audio import Pipeline")
+    if "qwen3_alignment" in required_profiles:
+        profile_imports.append(
+            "from transformers import AutoModelForTokenClassification, AutoProcessor"
+        )
     script = (
-        "import importlib.metadata as m, json, torch\n"
+        "import importlib.metadata as m, json, sys, torch\n"
+        f"sys.path.insert(0, {str(source_root)!r})\n"
+        "from meeting_notes.rocm_compat import "
+        "install_windows_rocm_transformers_compatibility as install_compat\n"
+        "install_compat(torch)\n"
+        + "\n".join(profile_imports)
+        + "\n"
         "def version(name):\n"
         "  try: return m.version(name)\n"
         "  except m.PackageNotFoundError: return None\n"
@@ -231,9 +258,10 @@ def _migrate_runtime_manifest(runtime: Path, identity: dict[str, object]) -> Non
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return
-    profiles = manifest.get("profiles")
-    if not isinstance(profiles, dict) or "qwen3_alignment" in profiles:
+    profiles_value = manifest.get("profiles")
+    if not isinstance(profiles_value, dict) or "qwen3_alignment" in profiles_value:
         return
+    profiles = cast("dict[str, object]", profiles_value)
     legacy = profiles.pop("qwen3_asr", None)
     profiles["qwen3_alignment"] = (
         legacy
@@ -353,20 +381,20 @@ def provision_runtime(
                 "--no-cache",
                 f"pyannote.audio=={ROCM_PYANNOTE_VERSION}",
             ],
-            [
-                uv,
-                "pip",
-                "install",
-                "--python",
-                str(runtime_python(staging)),
-                "--no-cache",
-                ROCM_TRANSFORMERS_SPEC,
-                "accelerate",
-                "librosa",
-                "soundfile",
-                "soynlp",
-            ],
         ]
+        optional_packages = _profile_packages(profiles)
+        if optional_packages:
+            commands.append(
+                [
+                    uv,
+                    "pip",
+                    "install",
+                    "--python",
+                    str(runtime_python(staging)),
+                    "--no-cache",
+                    *optional_packages,
+                ]
+            )
         for command in commands:
             result = subprocess.run(
                 command,
@@ -380,8 +408,16 @@ def provision_runtime(
             if result.returncode:
                 detail = (result.stderr or result.stdout).strip()[-2000:]
                 raise RocmRuntimeError(f"ROCm runtime provisioning failed: {detail}")
-        installed_profiles = tuple(sorted({"diarization", "qwen3_alignment", *profiles}))
+        installed_profiles = tuple(sorted({"diarization", *profiles}))
         identity = validate_runtime(staging, required_profiles=installed_profiles)
+        manifest_profiles: dict[str, object] = {
+            "diarization": {"pyannote_audio": identity.get("pyannote")},
+        }
+        if "qwen3_alignment" in installed_profiles:
+            manifest_profiles["qwen3_alignment"] = {
+                "transformers": identity.get("transformers"),
+                "soynlp": identity.get("soynlp"),
+            }
         manifest = {
             "version": 3,
             "runtime": ROCM_RUNTIME_NAME,
@@ -389,13 +425,7 @@ def provision_runtime(
             "torch": identity.get("torch"),
             "hip": identity.get("hip"),
             "device": identity.get("device"),
-            "profiles": {
-                "diarization": {"pyannote_audio": identity.get("pyannote")},
-                "qwen3_alignment": {
-                    "transformers": identity.get("transformers"),
-                    "soynlp": identity.get("soynlp"),
-                },
-            },
+            "profiles": manifest_profiles,
             "installed_at": datetime.now(UTC).isoformat(),
         }
         (staging / ".meeting-notes-runtime.json").write_text(
