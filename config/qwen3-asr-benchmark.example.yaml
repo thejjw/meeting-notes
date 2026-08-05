@@ -1,0 +1,16 @@
+# Qwen3-ASR feasibility matrix. Runs inherit the active project configuration.
+runs:
+  - name: current-lemonade-npu
+    runtime:
+      asr_backend: lemonade
+      device: npu
+
+  - name: qwen3-asr-1.7b-gguf-vulkan-rocm-aligner
+    runtime:
+      asr_backend: qwen3_asr_lemonade
+      device: rocm
+    asr:
+      language: ko
+      backend_options:
+        qwen3_asr_lemonade:
+          torch_compile: false

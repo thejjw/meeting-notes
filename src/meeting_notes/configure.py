@@ -64,6 +64,26 @@ def run_configure(
 
         rocm = probe_rocm(MeetingNotesConfig())
         console.print(f"\nDiarization ROCm hybrid: {rocm.state}\n  {rocm.detail}")
+        from meeting_notes.asr.lemonade import LemonadeASRBackend
+
+        lemonade_ready = LemonadeASRBackend().is_available()
+        vulkan_ready = bool(diag.gpu.vulkan_devices)
+        if rocm.state in {"eligible", "ready"} and lemonade_ready and vulkan_ready:
+            console.print(
+                "\nQwen3-ASR Lemonade Vulkan + ROCm aligner: available as an explicit GPU opt-in\n"
+                "  Run `meeting-notes asr setup --backend qwen3_asr_lemonade`."
+            )
+        elif rocm.state in {"eligible", "ready"} and not lemonade_ready:
+            console.print(
+                "\nQwen3-ASR Lemonade Vulkan + ROCm aligner: AMD GPU is eligible; start Lemonade "
+                "Server to enable setup."
+            )
+        elif rocm.state in {"eligible", "ready"}:
+            console.print(
+                "\nQwen3-ASR Lemonade Vulkan + ROCm aligner: the ROCm Python path is "
+                "eligible, but no Vulkan GPU was detected. Update the AMD graphics driver "
+                "or explicitly configure the Lemonade ROCm fallback."
+            )
         return
 
     if accept_defaults:
@@ -302,6 +322,7 @@ def _run_interactive_wizard(config_path: str | None = None) -> None:
     console.print("\n[bold]Language settings[/bold]\n")
     console.print("  ko: Korean-dominant dialogue, including ordinary English terms")
     console.print("  en: English-dominant dialogue")
+    console.print("  Other languages: enter an ISO code such as ja, zh, fr, de, or es")
     console.print(
         "  auto: detect one dominant language per ASR chunk; not sentence-level language switching"
     )
@@ -779,6 +800,30 @@ def _configured_checks(config_path: str | None) -> dict[str, object]:
         _add_diarization_checks(checks, config)
         return checks
 
+    if config.runtime.asr_backend == "qwen3_asr_lemonade":
+        from meeting_notes.asr.registry import get_configured_backend
+
+        readiness = get_configured_backend(config).check_readiness()
+        checks.update(
+            {
+                "configured": True,
+                "asr_backend": "qwen3_asr_lemonade",
+                "device": config.runtime.device,
+                "runtime_ready": readiness.available,
+                "runtime_detail": readiness.detail,
+                "server_version": readiness.version,
+                "server_url": readiness.metadata.get("base_url"),
+                "model_name": config.asr.backend_options.qwen3_asr_lemonade.model_id,
+                "checkpoint": config.asr.backend_options.qwen3_asr_lemonade.checkpoint,
+                "aligner_model": config.asr.backend_options.qwen3_asr_lemonade.aligner_model_id,
+                "actual_device": readiness.device,
+                "diarization_enabled": config.diarization.enabled,
+                "latest_transcript": _latest_transcript_metadata(config),
+            }
+        )
+        _add_diarization_checks(checks, config)
+        return checks
+
     from meeting_notes.models import verify_model
     from meeting_notes.runtime import find_manifest_for_executable
 
@@ -953,7 +998,7 @@ def _diarization_recommendations(
 
 def _run_smoke_test(config_path: str | None) -> dict[str, object]:
     config = load_config(config_path)
-    if config.runtime.asr_backend == "lemonade":
+    if config.runtime.asr_backend in {"lemonade", "qwen3_asr_lemonade"}:
         from meeting_notes.asr.registry import get_configured_backend
 
         configured = get_configured_backend(config)
@@ -974,7 +1019,7 @@ def _run_smoke_test(config_path: str | None) -> dict[str, object]:
                     "-i",
                     "anullsrc=r=16000:cl=mono",
                     "-t",
-                    "0.25",
+                    "1.0",
                     "-c:a",
                     "pcm_s16le",
                     "-y",
@@ -995,7 +1040,10 @@ def _run_smoke_test(config_path: str | None) -> dict[str, object]:
                 return {"success": False, "detail": str(error)}
             return {
                 "success": True,
-                "detail": f"Lemonade transcription succeeded on {config.runtime.device}",
+                "detail": (
+                    f"{config.runtime.asr_backend} transcription succeeded "
+                    f"on {config.runtime.device}"
+                ),
             }
     executable = Path(config.runtime.whisper_cpp_path)
     model = Path(config.asr.model_path or "")
@@ -1070,6 +1118,18 @@ def _print_configured_asr(configured: dict[str, object]) -> None:
         console.print(f"  Model: {configured['lemonade_model_id']}")
         console.print(f"  Downloaded: {'yes' if configured['model_downloaded'] else 'no'}")
         console.print(f"  Loaded: {'yes' if configured['model_loaded'] else 'no'}")
+        console.print(f"  Device: {configured['actual_device'] or configured['device']}")
+        console.print(f"  Status: [{style}]{configured['runtime_detail']}[/{style}]")
+        return
+
+    if configured["asr_backend"] == "qwen3_asr_lemonade":
+        ready = bool(configured["runtime_ready"])
+        style = "green" if ready else "red"
+        console.print("  ASR backend: [bold]qwen3_asr_lemonade[/bold]")
+        console.print(f"  Server URL: {configured['server_url']}")
+        console.print(f"  Model: {configured['model_name']}")
+        console.print(f"  Checkpoint: {configured['checkpoint']}")
+        console.print(f"  Forced aligner: {configured['aligner_model']}")
         console.print(f"  Device: {configured['actual_device'] or configured['device']}")
         console.print(f"  Status: [{style}]{configured['runtime_detail']}[/{style}]")
         return
@@ -1196,7 +1256,10 @@ def run_doctor(
             and configured.get("asr_backend") == "whisper_cpp"
             and configured.get("executable_runnable")
         )
-        lemonade_selected = configured.get("asr_backend") == "lemonade"
+        lemonade_selected = configured.get("asr_backend") in {
+            "lemonade",
+            "qwen3_asr_lemonade",
+        }
         if (
             not lemonade_selected
             and not diag.tools.whisper_cpp_available

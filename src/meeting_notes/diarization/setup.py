@@ -28,7 +28,7 @@ from meeting_notes.diarization.acceleration import (
     provision_runtime,
     remove_runtime,
 )
-from meeting_notes.storage import legacy_user_cache_root
+from meeting_notes.storage import legacy_user_cache_root, project_cache_root
 
 console = Console(stderr=True)
 
@@ -386,7 +386,7 @@ def run_diarization_status(*, config_path: str | None = None, output_json: bool 
         "model_bytes": directory_size(model) if model else 0,
         "rocm_gpu_runtime_path": str(runtime),
         "runtime_bytes": directory_size(runtime),
-        "total_bytes": directory_size(root),
+        "total_bytes": directory_size(root) + directory_size(runtime),
         "rocm": probe.to_dict(),
     }
     if output_json:
@@ -415,7 +415,7 @@ def run_diarization_runtime_remove(*, config_path: str | None = None, yes: bool 
     resolved_config = _resolve_config_path(config_path)
     if resolved_config is None:
         raise DiarizationSetupError("No writable active configuration was found.")
-    root = (diarization_cache_root(config) / "runtimes").resolve()
+    root = (project_cache_root(config) / "runtimes").resolve()
     runtime = (
         Path(config.diarization.rocm_gpu_runtime_path).resolve()
         if config.diarization.rocm_gpu_runtime_path
@@ -424,6 +424,19 @@ def run_diarization_runtime_remove(*, config_path: str | None = None, yes: bool 
     if not runtime.is_relative_to(root):
         raise DiarizationSetupError(
             f"Refusing to remove a runtime outside the project cache: {runtime}"
+        )
+    qwen_options = config.asr.backend_options.qwen3_asr_lemonade
+    qwen_runtime = (
+        Path(qwen_options.rocm_gpu_runtime_path).expanduser().resolve()
+        if qwen_options.rocm_gpu_runtime_path
+        else None
+    )
+    if qwen_runtime == runtime and (
+        config.runtime.asr_backend == "qwen3_asr_lemonade" or qwen_runtime is not None
+    ):
+        raise DiarizationSetupError(
+            "This ROCm runtime is shared with Qwen forced alignment. Remove or "
+            "reconfigure the Lemonade Qwen backend before deleting it."
         )
     size = directory_size(runtime)
     if not runtime.exists():

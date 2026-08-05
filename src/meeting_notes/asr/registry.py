@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from meeting_notes.asr.base import ASRBackend, ASRReadiness
 from meeting_notes.asr.lemonade import LemonadeASRBackend
+from meeting_notes.asr.qwen3_lemonade import Qwen3ASRLemonadeBackend
 from meeting_notes.asr.whisper_cpp import WhisperCppBackend
 from meeting_notes.storage import project_cache_root
 
@@ -19,6 +20,7 @@ if TYPE_CHECKING:
 _registry: dict[str, type[ASRBackend]] = {
     "whisper_cpp": WhisperCppBackend,
     "lemonade": LemonadeASRBackend,
+    "qwen3_asr_lemonade": Qwen3ASRLemonadeBackend,
 }
 
 
@@ -112,10 +114,7 @@ def get_backend(name: str, **kwargs: object) -> ASRBackend:
         register_backend("lemonade", LemonadeASRBackend)
 
     if name not in _registry:
-        raise ValueError(
-            f"Unknown ASR backend: '{name}'. "
-            f"Available: {', '.join(_registry.keys())}"
-        )
+        raise ValueError(f"Unknown ASR backend: '{name}'. Available: {', '.join(_registry.keys())}")
 
     return _registry[name](**kwargs)  # type: ignore[call-arg]
 
@@ -165,12 +164,8 @@ def get_configured_backend(config: MeetingNotesConfig) -> ConfiguredASRBackend:
             {
                 "executable": str(executable),
                 "managed": runtime_manifest is not None,
-                "runtime_version": (
-                    runtime_manifest.get("version") if runtime_manifest else None
-                ),
-                "runtime_backend": (
-                    runtime_manifest.get("backend") if runtime_manifest else None
-                ),
+                "runtime_version": (runtime_manifest.get("version") if runtime_manifest else None),
+                "runtime_backend": (runtime_manifest.get("backend") if runtime_manifest else None),
                 "source_revision": (
                     runtime_manifest.get("source_revision") if runtime_manifest else None
                 ),
@@ -206,6 +201,52 @@ def get_configured_backend(config: MeetingNotesConfig) -> ConfiguredASRBackend:
                 "compute_type": options.compute_type,
                 "batch_size": options.batch_size,
                 "threads": options.cpu_threads,
+            }
+        )
+    elif config.runtime.asr_backend == "qwen3_asr_lemonade":
+        from meeting_notes.asr.qwen3_lemonade import managed_aligner_dir
+        from meeting_notes.diarization.acceleration import runtime_environment, runtime_python
+
+        if config.runtime.device != "rocm":
+            raise ValueError("qwen3_asr_lemonade is GPU-only; set runtime.device to 'rocm'.")
+        options = config.asr.backend_options.qwen3_asr_lemonade
+        cache = project_cache_root(config) / "models"
+        aligner_path = managed_aligner_dir(cache, options.aligner_model_id)
+        if not options.rocm_gpu_runtime_path:
+            python = Path("__missing_qwen_alignment_runtime__")
+            environment = None
+        else:
+            runtime = Path(options.rocm_gpu_runtime_path).expanduser().resolve()
+            python = runtime_python(runtime)
+            environment = runtime_environment(runtime)
+        backend = Qwen3ASRLemonadeBackend(
+            base_url=options.base_url,
+            model_id=options.model_id,
+            checkpoint=options.checkpoint,
+            api_key_env=options.api_key_env,
+            llamacpp_backend=options.llamacpp_backend,
+            python_executable=str(python),
+            aligner_path=aligner_path,
+            ctx_size=options.ctx_size,
+            max_new_tokens=options.max_new_tokens,
+            torch_compile=options.torch_compile,
+            connect_timeout_seconds=options.connect_timeout_seconds,
+            provisioning_timeout_seconds=options.provisioning_timeout_seconds,
+            transcription_timeout_seconds=options.transcription_timeout_seconds,
+            worker_timeout_seconds=options.worker_timeout_seconds,
+            environment=environment,
+        )
+        common.update({"model": options.model_id, "model_path": None})
+        identity.update(
+            {
+                "model": options.model_id,
+                "checkpoint": options.checkpoint,
+                "aligner_model": options.aligner_model_id,
+                "aligner_model_path": str(aligner_path),
+                "python_executable": str(python),
+                "base_url": options.base_url,
+                "llamacpp_backend": options.llamacpp_backend,
+                "torch_compile": options.torch_compile,
             }
         )
     else:

@@ -1,6 +1,6 @@
 # meeting-notes
 
-Local-first Korean/English meeting notes with Whisper transcription.
+Local-first Korean/English meeting transcription and notes.
 
 ## Prerequisites
 
@@ -246,6 +246,7 @@ original recording. Without that flag, the input directory is not modified.
 | `meeting-notes models [list/status/info/download/verify]` | List, check, download, or verify Whisper model integrity |
 | `meeting-notes runtime [status/install]` | Check runtime status or install whisper.cpp CPU/Vulkan binaries |
 | `meeting-notes cache [status/migrate]` | Inspect project storage or transactionally migrate legacy Whisper assets |
+| `meeting-notes asr setup/status` | Provision or inspect GPU Qwen3-ASR plus project-local alignment |
 | `meeting-notes diarization setup` | Provision Community-1 from Hugging Face or a portable backup, with optional ROCm acceleration |
 | `meeting-notes diarization status` | Show model/runtime readiness and total project-local storage |
 | `meeting-notes diarization remove-runtime` | Remove the project-local ROCm runtime and return diarization to CPU |
@@ -418,8 +419,10 @@ summarization:
 
 ### Language configuration
 
-Whisper uses one configured language for each transcription chunk. For the
-Korean/English technical meetings this project primarily targets:
+`asr.language` is shared by every transcription backend. Each backend receives
+one dominant-language hint for each transcription chunk; there is no supported
+two-language value such as `ko,en` or `[ko, en]`. For the Korean/English
+technical meetings this project primarily targets:
 
 ```yaml
 asr:
@@ -427,8 +430,8 @@ asr:
 ```
 
 Use `ko` when the conversation is Korean-dominant but includes English product
-names, technical terms, or ordinary code-switching. Whisper's multilingual
-tokenizer can still emit English text; `ko` does not mean that every recognized
+names, technical terms, or ordinary code-switching. Both multilingual Whisper
+and Qwen can still emit English text; `ko` does not mean that every recognized
 token must be Korean. Use `en` for English-dominant dialogue.
 
 Use `auto` when the dominant language is genuinely unknown:
@@ -438,11 +441,15 @@ asr:
   language: auto
 ```
 
-`auto` is not sentence- or speaker-level bilingual detection. Whisper detects a
-dominant language before transcription, and meeting-notes repeats that
-detection once per ASR chunk. It may help when long Korean and English sections
-fall into separate chunks, but rapid language switching remains a model
-limitation.
+`auto` is not sentence- or speaker-level bilingual detection. The active engine
+detects one dominant language independently for each ASR chunk. It is useful
+when the language is unknown or when substantial Korean-heavy and English-heavy
+sections fall into different chunks. It is usually not better for an ordinary
+Korean meeting containing English terminology, and rapid sentence-by-sentence
+switching remains a model limitation. In that common case, select the dominant
+language explicitly (`ko` or `en`). Qwen also passes the one detected language
+to its forced aligner, so mixed-language timestamps can be imperfect even when
+the transcript contains both languages.
 
 The managed `tiny`, `base`, `small`, `medium`, `large-v3`, and
 `large-v3-turbo` files are multilingual models rather than English-only `.en`
@@ -478,6 +485,7 @@ generally improves as model size increases:
 |---------|---------|-------|
 | `whisper_cpp` | Managed CPU binary or Vulkan source build | **Default** |
 | `lemonade` | Running AMD Lemonade Server | Opt-in NPU acceleration |
+| `qwen3_asr_lemonade` | Lemonade Vulkan plus managed ROCm aligner | Experimental AMD GPU, opt-in |
 | `openai_whisper` | `uv pip install openai-whisper` | Python/PyTorch, opt-in |
 | `faster_whisper` | `uv pip install faster-whisper` | CPU/NVIDIA CUDA, opt-in |
 
@@ -520,6 +528,88 @@ Responses are shifted back to absolute recording time, overlap is removed at
 chunk boundaries, and the pipeline writes one continuous transcript. Values
 above 100 MiB require a Lemonade Server with a correspondingly increased
 request limit and may otherwise produce HTTP 413 errors.
+
+### Qwen3-ASR 1.7B GPU alternative
+
+`qwen3_asr_lemonade` is an opt-in AMD GPU backend. Lemonade runs the fixed
+`unslothai/Qwen3-ASR-1.7B-GGUF:Q8_0` checkpoint through llama.cpp Vulkan. The
+project-managed ROCm Python environment then runs
+`Qwen/Qwen3-ForcedAligner-0.6B-hf` to produce timestamps for speaker assignment
+and subtitles. Qwen does not perform diarization; pyannote remains the following
+pipeline stage.
+
+There is no CPU mode or silent fallback. Install AMD HIP and start Lemonade Server,
+then run:
+
+```powershell
+uv run meeting-notes asr setup --backend qwen3_asr_lemonade
+uv run meeting-notes asr status
+```
+
+Setup reuses a matching Lemonade Model Manager download or pulls it automatically,
+loads it with `llamacpp_backend: vulkan`, provisions the aligner under the project
+cache, and exercises both components. It reports approximately 2.35 GiB of
+Lemonade-owned GGUF storage, 1.72 GiB of project-local aligner storage, and any
+temporary ROCm staging requirement before proceeding. Confirmation defaults to
+yes. Add `--activate` to select Qwen; otherwise Whisper/NPU remains active.
+
+The removed native `qwen3_asr` backend is not accepted as an alias. Successful
+setup removes only its obsolete project-local 1.7B Transformers weights, reclaiming
+approximately 3.81 GiB, while retaining the forced aligner and shared ROCm runtime.
+
+Vulkan is the default for Qwen transcription because Lemonade 11.5.1 prefers it
+on AMD systems and it passed the project's local 30-second and four-minute ASR
+checks. On the same four-minute clip, Qwen generation took 11.7 seconds with
+Vulkan and 15.1 seconds with ROCm. If a driver-specific Vulkan problem is found,
+set `asr.backend_options.qwen3_asr_lemonade.llamacpp_backend: rocm`; this changes
+only Lemonade transcription. The forced aligner and optional pyannote acceleration
+still use the project-local Python ROCm runtime. `runtime.device: rocm` therefore
+identifies that mandatory Python runtime even when Lemonade itself uses Vulkan.
+
+Qwen language behavior is independent of the configured Korean default. Set an
+explicit dominant language using either its code or English name, for example:
+
+```yaml
+asr:
+  language: ja  # Japanese
+```
+
+Use `language: auto` to let Qwen detect one language independently for every ASR
+chunk. This is not sentence-level or speaker-level language detection, so rapid
+code-switching within a chunk remains a model limitation. Qwen3-ASR recognizes
+30 languages, but its forced aligner currently timestamps only `zh`, `en`, `yue`,
+`fr`, `de`, `it`, `ja`, `ko`, `pt`, `ru`, and `es`. Meeting-notes accepts those
+11 explicit languages because timestamps are required for subtitles and speaker
+assignment. In auto mode, an unsupported detected language produces an actionable
+error and suggests using Whisper instead of silently returning untimestamped text.
+
+To benchmark Whisper/NPU and Qwen/GPU on the first ten minutes of a recording:
+
+```powershell
+uv run meeting-notes benchmark "meeting.m4a" `
+  --matrix config/qwen3-asr-benchmark.example.yaml `
+  --start-seconds 0 --duration-seconds 600
+```
+
+The benchmark records cold load and end-to-end timing, RTF, memory data, and a
+separate transcript artifact for every run. Qwen alignment chunks are capped at
+four minutes, below the forced aligner's five-minute limit. Aligned words, rather
+than whole segments, are assigned at overlap boundaries so chunk merging does not
+repeat speech.
+
+The current Ryzen AI Max+ 395 / Radeon 8060S environment produced these results:
+
+| Backend/device | Time | RTF | Speed | Observed peak memory |
+|---|---:|---:|---:|---:|
+| Lemonade Whisper/NPU | 65.3 s | 0.109 | 9.18x real time | server memory not included |
+| Qwen first-ever GPU run | 101.4 s / 240 s | 0.422 | 2.37x real time | includes ROCm kernel warm-up |
+| Qwen subsequent fresh worker | 29.8 s / 240 s | 0.124 | 8.04x real time | 5.1 GiB alignment allocation |
+
+The first forced-alignment run spent most of its time warming ROCm kernels. A later
+fresh worker transcribed in 15.3 seconds and reported 6.2 seconds of alignment,
+with process startup and synchronization accounting for the remainder. The sample
+suggested fewer Whisper-style repetitions, but it has no reference transcript, so
+compare retained artifacts before drawing quality conclusions.
 
 ## Summarization Backends
 
@@ -702,10 +792,9 @@ With the example defaults, the workspace contains:
 | `./data/meetings/<job>/summary/` | Current structured JSON or local Markdown summary |
 | `./data/meetings/<job>/output/` | Current minutes, publication generations, and compact run reports |
 | `./data/meetings/<job>/logs/` | Retained tool or build logs when produced |
-| `./cache/models/` | Verified managed Whisper model files |
-| `./cache/runtimes/` | Managed whisper.cpp CPU/Vulkan runtimes and build logs |
+| `./cache/models/` | Managed Whisper and Qwen forced-aligner model files |
+| `./cache/runtimes/` | Managed whisper.cpp and shared ROCm Python runtimes/build logs |
 | `./cache/diarization/models/` | Project-local Community-1 model snapshots |
-| `./cache/diarization/runtimes/` | Optional project-local ROCm Python runtime (about 6.1 GiB) |
 
 The job root also retains `manifest.json`, `speakers.yaml`, and speaker-template
 backups. The manifest contains paths, timestamps, checksums, configuration
@@ -777,8 +866,9 @@ or models.
 
 ### Provider and development data
 
-Hugging Face login credentials and its download cache are managed by
-`huggingface_hub`, normally under `${HF_HOME:-~/.cache/huggingface}`. Claude,
+Qwen model payloads and their Hugging Face download metadata are explicitly kept
+under `project.cache_dir`. Hugging Face login credentials remain provider-managed
+and may live outside the project. Claude,
 Codex, custom launchers, OS credential managers, Git, `uv`, and Python tooling
 may maintain their own configuration, authentication, caches, virtual
 environments, and history outside the paths above. meeting-notes does not copy
@@ -833,14 +923,17 @@ requirement before continuing. The confirmation defaults to yes; use `--yes` for
 non-interactive provisioning. Failed staging installs are removed. The accelerated
 worker deliberately keeps segmentation and clustering on CPU and moves only
 speaker embeddings to the AMD GPU in FP32. It does not silently fall back to CPU.
-The managed environment is pinned to pyannote.audio 4.0.7 and AMD's Windows
-PyTorch 2.9.1+rocm7.2.1 packages, and readiness checks enforce both versions.
+The shared managed environment is stored under `./cache/runtimes/`, is pinned to
+pyannote.audio 4.0.7 and AMD's Windows PyTorch 2.9.1+rocm7.2.1 packages, and can
+also contains the Qwen forced-alignment Transformers profile. Readiness checks validate each
+installed profile independently.
 
 AMD's supported Windows PyTorch instructions and prerequisites are maintained at
 <https://rocm.docs.amd.com/projects/radeon-ryzen/en/latest/docs/install/installryz/windows/install-pytorch.html>.
 Automated provisioning in meeting-notes currently supports native Windows only.
 
-To reclaim the runtime storage while keeping the model, run:
+To reclaim the runtime storage while keeping the model, run the command below.
+Removal is refused while Lemonade Qwen alignment is configured to share the runtime:
 
 ```powershell
 uv run meeting-notes diarization remove-runtime

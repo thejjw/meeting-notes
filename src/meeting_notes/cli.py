@@ -12,7 +12,7 @@ from meeting_notes import __version__
 
 app = typer.Typer(
     name="meeting-notes",
-    help="Local-first Korean/English meeting notes with Whisper transcription.",
+    help="Local-first Korean/English meeting transcription and notes.",
     add_completion=False,
     rich_markup_mode="rich",
 )
@@ -285,6 +285,50 @@ def cache_migrate(
     except RuntimeError as error:
         console.print(f"[red]Cache migration failed:[/red] {error}")
         raise typer.Exit(1) from error
+
+
+# --- ASR setup commands ---
+
+
+asr_app = typer.Typer(help="Set up and inspect optional speech-recognition backends.")
+app.add_typer(asr_app, name="asr")
+
+
+@asr_app.command("setup")
+def asr_setup(
+    backend: Annotated[str, typer.Option("--backend")] = "qwen3_asr_lemonade",
+    activate: Annotated[bool, typer.Option("--activate")] = False,
+    yes: Annotated[bool, typer.Option("--yes", "-y")] = False,
+    force_runtime: Annotated[bool, typer.Option("--force-runtime")] = False,
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+) -> None:
+    """Provision an optional ASR backend in project-local storage."""
+    if backend != "qwen3_asr_lemonade":
+        raise typer.BadParameter(
+            "Only the GPU-only qwen3_asr_lemonade backend is supported."
+        )
+    from meeting_notes.asr.setup import run_setup
+
+    try:
+        run_setup(
+            config_path=config_path,
+            activate=activate,
+            yes=yes,
+            force_runtime=force_runtime,
+        )
+    except RuntimeError as error:
+        console.print(f"[red]Lemonade Qwen3-ASR setup failed:[/red] {error}")
+        raise typer.Exit(1) from error
+
+
+@asr_app.command("status")
+def asr_status(
+    config_path: Annotated[str | None, typer.Option("--config")] = None,
+) -> None:
+    """Show Lemonade Qwen3-ASR model and ROCm alignment readiness."""
+    from meeting_notes.asr.setup import show_status
+
+    show_status(config_path=config_path)
 
 
 # --- diarization commands ---
@@ -668,11 +712,19 @@ def benchmark(
         str, typer.Option("--matrix", help="Benchmark matrix YAML.")
     ] = "config/benchmark-matrix.yaml",
     config_path: Annotated[str | None, typer.Option("--config")] = None,
+    start_seconds: Annotated[float, typer.Option("--start-seconds")] = 0.0,
+    duration_seconds: Annotated[float | None, typer.Option("--duration-seconds")] = None,
 ) -> None:
     """Run benchmark comparing configurations."""
     from meeting_notes.pipeline import run_benchmark
 
-    run_benchmark(input_file=input_file, matrix=matrix, config_path=config_path)
+    run_benchmark(
+        input_file=input_file,
+        matrix=matrix,
+        config_path=config_path,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+    )
 
 
 # --- clean command ---

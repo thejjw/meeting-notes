@@ -92,6 +92,26 @@ class LemonadeBackendOptions(BaseModel):
     max_upload_mib: float = Field(default=100.0, gt=1.0)
 
 
+class Qwen3ASRLemonadeBackendOptions(BaseModel):
+    """GPU-only Lemonade Qwen3-ASR plus native ROCm alignment options."""
+
+    base_url: str = "http://127.0.0.1:13305"
+    model_id: str = "Qwen3-ASR-1.7B-GGUF-Q8_0"
+    checkpoint: str = "unslothai/Qwen3-ASR-1.7B-GGUF:Q8_0"
+    api_key_env: str = "LEMONADE_API_KEY"
+    llamacpp_backend: Literal["vulkan", "rocm"] = "vulkan"
+    aligner_model_id: str = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
+    ctx_size: int = Field(default=8192, ge=4096)
+    max_new_tokens: int = Field(default=4096, ge=64)
+    max_chunk_minutes: float = Field(default=4.0, gt=0.0, le=5.0)
+    torch_compile: bool = False
+    rocm_gpu_runtime_path: str | None = None
+    connect_timeout_seconds: float = Field(default=5.0, gt=0.0)
+    provisioning_timeout_seconds: float = Field(default=3600.0, gt=0.0)
+    transcription_timeout_seconds: float = Field(default=7200.0, gt=0.0)
+    worker_timeout_seconds: float = Field(default=7200.0, gt=0.0)
+
+
 class ASRBackendOptions(BaseModel):
     """Backend-specific ASR options."""
 
@@ -99,6 +119,9 @@ class ASRBackendOptions(BaseModel):
     openai_whisper: OpenAIWhisperBackendOptions = Field(default_factory=OpenAIWhisperBackendOptions)
     faster_whisper: FasterWhisperBackendOptions = Field(default_factory=FasterWhisperBackendOptions)
     lemonade: LemonadeBackendOptions = Field(default_factory=LemonadeBackendOptions)
+    qwen3_asr_lemonade: Qwen3ASRLemonadeBackendOptions = Field(
+        default_factory=Qwen3ASRLemonadeBackendOptions
+    )
 
 
 class RuntimeConfig(BaseModel):
@@ -489,6 +512,13 @@ def load_config(explicit_path: str | None = None) -> MeetingNotesConfig:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         if not isinstance(raw, dict):
             raise ConfigValidationError(f"Config file {path} is not a valid YAML mapping.")
+        runtime_raw = raw.get("runtime")
+        if isinstance(runtime_raw, dict) and runtime_raw.get("asr_backend") == "qwen3_asr":
+            raise ConfigValidationError(
+                "The native 'qwen3_asr' backend was removed. Run "
+                "'meeting-notes asr setup --backend qwen3_asr_lemonade' and select "
+                "'qwen3_asr_lemonade' instead."
+            )
         config = MeetingNotesConfig(**raw)
     except Exception as e:
         raise ConfigValidationError(f"Failed to load config from {path}: {e}") from e

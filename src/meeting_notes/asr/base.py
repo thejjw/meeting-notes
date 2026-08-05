@@ -117,3 +117,11 @@ class ASRBackend(ABC):
             version=self.get_version(),
             device=expected_device,
         )
+
+    def transcribe_batch(
+        self,
+        audio_paths: list[Path],
+        **kwargs: Any,
+    ) -> list[ASRResult]:
+        """Transcribe several files while allowing backends to reuse loaded models."""
+        return [self.transcribe(path, **kwargs) for path in audio_paths]

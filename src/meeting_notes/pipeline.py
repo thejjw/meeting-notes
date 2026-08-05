@@ -6,6 +6,7 @@ import hashlib
 import os
 import re
 import shutil
+import subprocess
 from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
@@ -532,21 +533,16 @@ def _run_transcribe(job_dir: Path, manifest: dict, config: MeetingNotesConfig) -
                 ffmpeg_path=config.runtime.ffmpeg_path,
             )
             save_chunks_manifest(chunks, job_dir / "audio" / "chunks.json")
-            chunk_results: list[tuple[AudioChunk, ASRResult]] = []
             for index, chunk in enumerate(chunks, 1):
                 console.print(
-                    f"  Transcribing audio chunk {index}/{len(chunks)} "
+                    f"  Queued audio chunk {index}/{len(chunks)} "
                     f"({chunk.source_start:.1f}s-{chunk.source_end:.1f}s)"
                 )
-                chunk_results.append(
-                    (
-                        chunk,
-                        backend.transcribe(
-                            Path(chunk.path),
-                            **configured.transcribe_kwargs,
-                        ),
-                    )
-                )
+            batch_results = backend.transcribe_batch(
+                [Path(chunk.path) for chunk in chunks],
+                **configured.transcribe_kwargs,
+            )
+            chunk_results = list(zip(chunks, batch_results, strict=True))
             result = _merge_asr_chunks(chunk_results)
             runtime_identity["chunk_count"] = len(chunks)
             runtime_identity["chunked"] = True
@@ -609,6 +605,13 @@ def _transcription_chunks(
             ) / 60.0
             max_minutes = min(max_minutes, upload_minutes)
             mode = "fixed"
+    elif config.runtime.asr_backend == "qwen3_asr_lemonade":
+        # Forced alignment is officially limited to five minutes. Stay below
+        # that boundary so every production segment has reliable timestamps.
+        qwen_limit = config.asr.backend_options.qwen3_asr_lemonade.max_chunk_minutes
+        max_minutes = min(max_minutes, qwen_limit)
+        if duration > qwen_limit * 60:
+            mode = "fixed"
 
     chunks = compute_chunks(
         duration,
@@ -641,6 +644,43 @@ def _merge_asr_chunks(
         )
         warnings.extend(result.warnings)
         for segment in result.segments:
+            aligned_words = segment.source.get("aligned_word_timestamps")
+            if isinstance(aligned_words, list):
+                owned_words: list[tuple[str, float, float]] = []
+                for word in aligned_words:
+                    if not isinstance(word, dict):
+                        continue
+                    word_start = float(word["start"]) + chunk.source_start
+                    word_end = float(word["end"]) + chunk.source_start
+                    word_midpoint = (word_start + word_end) / 2
+                    if word_midpoint < core_start or word_midpoint >= core_end:
+                        continue
+                    owned_words.append((str(word["text"]), word_start, word_end))
+                if not owned_words:
+                    continue
+                owned_text = re.sub(
+                    r"\s+([,.;:!?\uff0c\u3002\uff1b\uff1a\uff01\uff1f])",
+                    r"\1",
+                    " ".join(word[0].strip() for word in owned_words),
+                )
+                source = dict(segment.source)
+                source.pop("aligned_word_timestamps", None)
+                source["aligned_words"] = len(owned_words)
+                source["chunk_id"] = chunk.chunk_id
+                merged.append(
+                    ASRSegment(
+                        id="",
+                        start=max(chunk.source_start, owned_words[0][1]),
+                        end=min(chunk.source_end, owned_words[-1][2]),
+                        text=owned_text.strip(),
+                        language=segment.language,
+                        speaker=segment.speaker,
+                        confidence=segment.confidence,
+                        metrics=segment.metrics,
+                        source=source,
+                    )
+                )
+                continue
             absolute_start = min(
                 chunk.source_end,
                 max(chunk.source_start, segment.start + chunk.source_start),
@@ -1526,7 +1566,13 @@ def run_naming_finalize(job_dir: str, config_path: str | None = None) -> None:
     console.print("[yellow]naming finalize: implemented in pipeline[/yellow]")
 
 
-def run_benchmark(input_file: str, matrix: str, config_path: str | None = None) -> None:
+def run_benchmark(
+    input_file: str,
+    matrix: str,
+    config_path: str | None = None,
+    start_seconds: float = 0.0,
+    duration_seconds: float | None = None,
+) -> None:
     """Run benchmark comparing configurations."""
     from meeting_notes.benchmark.runner import (
         load_benchmark_matrix,
@@ -1544,13 +1590,55 @@ def run_benchmark(input_file: str, matrix: str, config_path: str | None = None) 
         console.print(f"[red]Benchmark matrix not found:[/red] {matrix}")
         raise typer.Exit(1)
 
+    config = load_config(config_path)
     bench_matrix = load_benchmark_matrix(matrix_path)
     console.print(f"[bold]Running benchmark with {len(bench_matrix.runs)} configurations[/bold]")
+    safe_stem = re.sub(r"[^A-Za-z0-9_.-]+", "-", source.stem).strip("-")
+    if not safe_stem:
+        safe_stem = "recording"
+    source_key = hashlib.sha256(str(source.resolve()).encode("utf-8")).hexdigest()[:8]
+    output_dir = Path("data") / "benchmarks" / f"{safe_stem}-{source_key}"
+    benchmark_source = source
+    if duration_seconds is not None:
+        if start_seconds < 0 or duration_seconds <= 0:
+            raise ValueError("Benchmark start must be >= 0 and duration must be > 0.")
+        output_dir.mkdir(parents=True, exist_ok=True)
+        benchmark_source = output_dir / "benchmark-clip.wav"
+        clipped = subprocess.run(
+            [
+                config.runtime.ffmpeg_path,
+                "-y",
+                "-v",
+                "error",
+                "-ss",
+                f"{start_seconds:.3f}",
+                "-t",
+                f"{duration_seconds:.3f}",
+                "-i",
+                str(source),
+                "-vn",
+                "-ar",
+                "16000",
+                "-ac",
+                "1",
+                "-c:a",
+                "pcm_s16le",
+                str(benchmark_source),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if clipped.returncode:
+            raise RuntimeError(f"Benchmark clip extraction failed: {clipped.stderr[-1000:]}")
 
-    results = run_benchmark_matrix(bench_matrix, source)
+    results = run_benchmark_matrix(
+        bench_matrix,
+        benchmark_source,
+        base_config=config,
+    )
 
     # Save results
-    output_dir = Path("data") / "benchmarks" / source.stem
     output_paths = render_benchmark_report(results, output_dir)
 
     console.print("\n[green]Benchmark complete.[/green]")

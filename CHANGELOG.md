@@ -5,6 +5,10 @@ All notable changes to meeting-notes will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Experimental opt-in Qwen3-ASR 1.7B Q8 backend using Lemonade llama.cpp Vulkan
+  by default, the project-local ROCm official 0.6B forced aligner, and no CPU fallback.
+- `asr setup/status` provisioning and a Qwen feasibility benchmark matrix with
+  clipped-input and per-run transcript artifacts.
 - Project-local Whisper model/runtime storage and `cache status` / `cache migrate`
   commands for verified, transactional migration from the former per-user cache.
 - Project-local native-Windows ROCm hybrid diarization: CPU segmentation and
@@ -35,6 +39,16 @@ All notable changes to meeting-notes will be documented in this file.
   "no timing history yet" until a matching job has completed once.
 
 ### Changed
+- Qwen Lemonade transcription now defaults to Vulkan on AMD, matching Lemonade
+  11.5.1 backend preference; explicit ROCm fallback remains configurable.
+- Qwen language selection now supports per-chunk automatic detection and all 11
+  languages shared by Qwen3-ASR and its required timestamp aligner, with clear
+  errors for ASR-only languages that cannot be aligned.
+- The managed ROCm Python environment now lives under the shared project
+  `cache/runtimes/` tree and tracks independently validated diarization and
+  Qwen forced-alignment profiles.
+- Removed the superseded native Python Qwen transcription backend and its CPU mode;
+  verified Lemonade setup reclaims only the obsolete 1.7B Transformers weights.
 - `project.cache_dir` is now the sole root for meeting-notes-managed Whisper models,
   whisper.cpp runtimes, build logs, and diarization assets on every platform.
 - CPU is now the explicit diarization default. The ambiguous `device: auto`

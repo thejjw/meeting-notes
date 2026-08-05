@@ -84,6 +84,8 @@ asr:
   model_path: null
   # Compatibility mirror; managed downloads derive this from project.cache_dir.
   model_cache_dir: ./cache/models
+  # Use auto for per-chunk detection. Qwen timestamped output supports:
+  # zh, en, yue, fr, de, it, ja, ko, pt, ru, es.
   language: ko
   task: transcribe
   initial_prompt: null
@@ -130,6 +132,28 @@ asr:
       # Stock Lemonade limits requests to 100 MiB. Audio uses a 90% safe budget;
       # larger normalized WAVs are split and merged automatically.
       max_upload_mib: 100
+    qwen3_asr_lemonade:
+      # GPU-only Qwen GGUF transcription through Lemonade, followed by the
+      # project-local native ROCm forced aligner.
+      base_url: http://127.0.0.1:13305
+      model_id: Qwen3-ASR-1.7B-GGUF-Q8_0
+      checkpoint: unslothai/Qwen3-ASR-1.7B-GGUF:Q8_0
+      api_key_env: LEMONADE_API_KEY
+      # Vulkan is Lemonade 11.5.1's preferred AMD llama.cpp backend. ROCm is
+      # retained as an explicit fallback; CPU is intentionally unsupported.
+      llamacpp_backend: vulkan
+      aligner_model_id: Qwen/Qwen3-ForcedAligner-0.6B-hf
+      ctx_size: 8192
+      max_new_tokens: 4096
+      # Stay below the aligner's official five-minute input limit.
+      max_chunk_minutes: 4
+      torch_compile: false
+      # Setup fills this with the shared project-local ROCm runtime.
+      rocm_gpu_runtime_path: null
+      connect_timeout_seconds: 5
+      provisioning_timeout_seconds: 3600
+      transcription_timeout_seconds: 7200
+      worker_timeout_seconds: 7200
 
 diarization:
   enabled: true

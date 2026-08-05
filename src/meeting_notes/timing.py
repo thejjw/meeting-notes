@@ -33,6 +33,8 @@ GENERIC_DEFAULT_REAL_TIME_FACTOR: dict[str, float] = {
 GENERIC_ASR_REAL_TIME_FACTOR: dict[tuple[str, str, str], float] = {
     # Measured on the local Lemonade 11.5 / NPU five-minute validation clip.
     ("lemonade", "npu", "large-v3-turbo"): 0.11,
+    # Lemonade Vulkan GGUF transcription plus native ROCm alignment on a four-minute clip.
+    ("qwen3_asr_lemonade", "rocm", "Qwen3-ASR-1.7B-GGUF-Q8_0"): 0.12,
 }
 
 

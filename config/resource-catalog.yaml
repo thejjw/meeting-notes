@@ -1,4 +1,4 @@
-# Resource catalog for whisper models
+# Resource catalog for local ASR models
 # Used by the setup wizard, doctor, model management, and benchmarks.
 # Update these figures when upstream documentation changes.
 
@@ -23,6 +23,15 @@ whisper_cpp:
       sha256: e0b66cd551ff6f2a28fabe3c6e89691eea037bb76833493abb9a71ca788994b3
 
 models:
+  Qwen3-ASR-1.7B-GGUF-Q8_0:
+    qwen3_asr_lemonade:
+      # Lemonade-owned GGUF plus the project-local 0.6B forced aligner.
+      disk_size_mib: 4167
+      reference_memory_mb: 6200
+      recommended_free_ram_gb: 12.0
+      confidence: locally_measured
+      source: "https://huggingface.co/unslothai/Qwen3-ASR-1.7B-GGUF"
+
   tiny:
     whisper_cpp:
       disk_size_mib: 75

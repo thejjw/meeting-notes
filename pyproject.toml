@@ -1,7 +1,7 @@
 [project]
 name = "meeting-notes"
 version = "0.1.0"
-description = "Local-first Korean/English meeting notes with Whisper transcription"
+description = "Local-first Korean/English meeting transcription and notes"
 requires-python = "==3.12.*"
 license = "Zlib"
 readme = "README.md"

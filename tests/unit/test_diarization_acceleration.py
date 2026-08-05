@@ -16,6 +16,7 @@ from meeting_notes.diarization.acceleration import (
     ROCM_PYANNOTE_VERSION,
     ROCM_TORCH_VERSION,
     RocmRuntimeError,
+    _migrate_runtime_manifest,
     default_runtime_dir,
     diarization_cache_root,
     directory_size,
@@ -36,7 +37,7 @@ def test_project_local_diarization_paths(tmp_path: Path) -> None:
     assert model_dir(config, "pyannote/fixture") == (
         tmp_path / "cache" / "diarization" / "models" / "pyannote--fixture"
     )
-    assert default_runtime_dir(config).parent == (tmp_path / "cache" / "diarization" / "runtimes")
+    assert default_runtime_dir(config).parent == (tmp_path / "cache" / "runtimes")
 
 
 def test_directory_size_counts_nested_files(tmp_path: Path) -> None:
@@ -131,3 +132,31 @@ def test_validate_runtime_requires_expected_torch(tmp_path: Path) -> None:
     result.stdout = json.dumps(payload)
     with patch("meeting_notes.diarization.acceleration.subprocess.run", return_value=result):
         assert validate_runtime(runtime)["device"] == "AMD"
+
+
+def test_qwen_runtime_profile_is_migrated_without_reinstall(tmp_path: Path) -> None:
+    runtime = tmp_path / "runtime"
+    runtime.mkdir()
+    manifest = runtime / ".meeting-notes-runtime.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "profiles": {
+                    "diarization": {"pyannote_audio": ROCM_PYANNOTE_VERSION},
+                    "qwen3_asr": {"transformers": "5.14.1", "soynlp": "0.0.493"},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    _migrate_runtime_manifest(
+        runtime,
+        {"transformers": "5.14.1", "soynlp": "0.0.493"},
+    )
+
+    migrated = json.loads(manifest.read_text(encoding="utf-8"))
+    assert migrated["version"] == 3
+    assert "qwen3_asr" not in migrated["profiles"]
+    assert migrated["profiles"]["qwen3_alignment"]["transformers"] == "5.14.1"
