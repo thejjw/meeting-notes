@@ -396,8 +396,8 @@ uv run meeting-notes configure --accept-defaults --provision --yes
 
 ```yaml
 runtime:
-  device: cpu                    # cpu, vulkan, rocm, cuda
-  asr_backend: whisper_cpp       # whisper_cpp, openai_whisper, faster_whisper
+  device: cpu                    # cpu baseline; npu/vulkan for Lemonade Whisper
+  asr_backend: whisper_cpp       # also lemonade, qwen3_asr_lemonade, faster_whisper
 
 asr:
   model: large-v3-turbo          # tiny, base, small, medium, large-v3, large-v3-turbo
@@ -484,31 +484,47 @@ generally improves as model size increases:
 | Backend | Install | Notes |
 |---------|---------|-------|
 | `whisper_cpp` | Managed CPU binary or Vulkan source build | **Default** |
-| `lemonade` | Running AMD Lemonade Server | Opt-in NPU acceleration |
+| `lemonade` | Running AMD Lemonade Server | Opt-in Vulkan or NPU acceleration |
 | `qwen3_asr_lemonade` | Lemonade Vulkan plus managed ROCm aligner | Experimental AMD GPU, opt-in |
 | `openai_whisper` | `uv pip install openai-whisper` | Python/PyTorch, opt-in |
 | `faster_whisper` | `uv pip install faster-whisper` | CPU/NVIDIA CUDA, opt-in |
 
 The default `whisper_cpp` backend uses a pre-built Windows binary from [whisper.cpp releases](https://github.com/ggml-org/whisper.cpp/releases). No Docker or compilation needed for the common case.
 
-### AMD Lemonade NPU acceleration
+### AMD Lemonade Whisper acceleration
 
-Run `meeting-notes configure` and select **AMD Lemonade NPU** to opt in. The
-wizard supplies the standard server URL, `http://127.0.0.1:13305`; press Enter
-unless your server uses a custom address.
+Run `meeting-notes configure` and select **AMD Lemonade Vulkan** or
+**AMD Lemonade NPU** to opt in. Vulkan is the recommended AMD GPU route when it
+is available; NPU remains useful when GPU resources need to stay free. The wizard
+supplies the standard server URL, `http://127.0.0.1:13305`; press Enter unless
+your server uses a custom address.
 
 Start Lemonade Server yourself before configuration or processing:
 
 ```powershell
 lemonade status
+lemonade backends install whispercpp:vulkan  # or whispercpp:npu
 uv run meeting-notes configure
 ```
 
 Once the server is reachable, the wizard can download, install, and load
-`Whisper-Large-v3-Turbo` through Lemonade. Large downloads require explicit
-confirmation. Meeting-notes does not start or stop Lemonade, and it fails
-clearly rather than silently falling back to CPU if the server, model, or NPU
-is unavailable.
+`Whisper-Large-v3-Turbo` through Lemonade. Install the corresponding
+`whispercpp:vulkan` or `whispercpp:npu` backend in Lemonade first. Large model
+downloads require explicit confirmation. Meeting-notes does not start or stop
+Lemonade, and it fails clearly rather than silently switching accelerators if
+the server, model, or selected backend is unavailable.
+
+Lemonade reports Vulkan as the generic device `gpu`; meeting-notes additionally
+checks `recipe_options.whispercpp_backend` so that Vulkan and any other GPU
+backend cannot be confused. ROCm is intentionally not offered for Lemonade
+transcription. The portable slow baseline remains the default local
+`whisper_cpp` backend with `runtime.device: cpu`.
+
+On this project's Ryzen AI Max+ 395 validation machine, a repeated 240-second
+Korean clip took about 13.2 seconds with Vulkan (18.2x real time) and 30.3 seconds
+with NPU (7.9x real time). Treat those as machine-specific speed measurements,
+not an accuracy guarantee; the generated transcripts differed and should be
+compared on representative recordings.
 
 Useful verification and provisioning commands:
 
@@ -557,14 +573,12 @@ The removed native `qwen3_asr` backend is not accepted as an alias. Successful
 setup removes only its obsolete project-local 1.7B Transformers weights, reclaiming
 approximately 3.81 GiB, while retaining the forced aligner and shared ROCm runtime.
 
-Vulkan is the default for Qwen transcription because Lemonade 11.5.1 prefers it
-on AMD systems and it passed the project's local 30-second and four-minute ASR
-checks. On the same four-minute clip, Qwen generation took 11.7 seconds with
-Vulkan and 15.1 seconds with ROCm. If a driver-specific Vulkan problem is found,
-set `asr.backend_options.qwen3_asr_lemonade.llamacpp_backend: rocm`; this changes
-only Lemonade transcription. The forced aligner and optional pyannote acceleration
+Vulkan is the only supported Lemonade backend for Qwen transcription because it
+matches Lemonade's AMD preference and passed the project's local 30-second and
+four-minute ASR checks. The forced aligner and optional pyannote acceleration
 still use the project-local Python ROCm runtime. `runtime.device: rocm` therefore
-identifies that mandatory Python runtime even when Lemonade itself uses Vulkan.
+identifies that mandatory Python runtime; it does not select a Lemonade ROCm
+backend.
 
 Qwen language behavior is independent of the configured Korean default. Set an
 explicit dominant language using either its code or English name, for example:

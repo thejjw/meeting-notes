@@ -14,7 +14,7 @@ import tempfile
 import time
 import wave
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
 import httpx
@@ -141,7 +141,7 @@ class Qwen3ASRLemonadeBackend(ASRBackend):
         model_id: str = QWEN_GGUF_MODEL_ID,
         checkpoint: str = QWEN_GGUF_CHECKPOINT,
         api_key_env: str = "LEMONADE_API_KEY",
-        llamacpp_backend: Literal["vulkan", "rocm"] = "vulkan",
+        llamacpp_backend: str = "vulkan",
         python_executable: str,
         aligner_path: Path,
         ctx_size: int = 8192,
@@ -157,6 +157,8 @@ class Qwen3ASRLemonadeBackend(ASRBackend):
         self.model_id = model_id
         self.checkpoint = checkpoint
         self.api_key_env = api_key_env
+        if llamacpp_backend != "vulkan":
+            raise ValueError("Qwen3-ASR Lemonade transcription supports Vulkan only.")
         self.llamacpp_backend = llamacpp_backend
         self.python_executable = python_executable
         self.aligner_path = aligner_path
@@ -335,7 +337,7 @@ class Qwen3ASRLemonadeBackend(ASRBackend):
     @property
     def accelerator_device(self) -> str:
         """Describe the two accelerators used by the timestamped ASR path."""
-        return "rocm" if self.llamacpp_backend == "rocm" else f"{self.llamacpp_backend}+rocm"
+        return "vulkan+rocm"
 
     def check_readiness(
         self,

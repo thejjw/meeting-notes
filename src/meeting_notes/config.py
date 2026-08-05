@@ -99,7 +99,7 @@ class Qwen3ASRLemonadeBackendOptions(BaseModel):
     model_id: str = "Qwen3-ASR-1.7B-GGUF-Q8_0"
     checkpoint: str = "unslothai/Qwen3-ASR-1.7B-GGUF:Q8_0"
     api_key_env: str = "LEMONADE_API_KEY"
-    llamacpp_backend: Literal["vulkan", "rocm"] = "vulkan"
+    llamacpp_backend: Literal["vulkan"] = "vulkan"
     aligner_model_id: str = "Qwen/Qwen3-ForcedAligner-0.6B-hf"
     ctx_size: int = Field(default=8192, ge=4096)
     max_new_tokens: int = Field(default=4096, ge=64)

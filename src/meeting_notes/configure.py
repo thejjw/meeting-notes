@@ -82,7 +82,7 @@ def run_configure(
             console.print(
                 "\nQwen3-ASR Lemonade Vulkan + ROCm aligner: the ROCm Python path is "
                 "eligible, but no Vulkan GPU was detected. Update the AMD graphics driver "
-                "or explicitly configure the Lemonade ROCm fallback."
+                "before enabling this backend."
             )
         return
 
@@ -542,6 +542,29 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
         connect_timeout_seconds=0.75,
     )
     lemonade_ready = lemonade.is_available()
+    lemonade_compatibility = "available" if lemonade_ready else "server not running"
+    lemonade_notes = (
+        f"detected at {lemonade_url}"
+        if lemonade_ready
+        else f"start Lemonade Server manually; default URL is {lemonade_url}"
+    )
+    vulkan_detected = bool(diag.gpu.vulkan_devices)
+    options.append(
+        {
+            "name": "AMD Lemonade Vulkan (opt-in)",
+            "backend": "Lemonade Server / whisper.cpp Vulkan",
+            "model": "large-v3-turbo",
+            "memory": "managed by Lemonade",
+            "recommended_ram": "system dependent",
+            "compatibility": (
+                lemonade_compatibility if vulkan_detected else "Vulkan not detected"
+            ),
+            "notes": lemonade_notes,
+            "profile": "amd-lemonade-vulkan",
+            "runtime_device": "vulkan",
+            "runtime_asr_backend": "lemonade",
+        }
+    )
     options.append(
         {
             "name": "AMD Lemonade NPU (opt-in)",
@@ -549,55 +572,11 @@ def _build_backend_options(diag: SystemDiagnostics) -> list[dict]:
             "model": "large-v3-turbo",
             "memory": "managed by Lemonade",
             "recommended_ram": "system dependent",
-            "compatibility": "available" if lemonade_ready else "server not running",
-            "notes": (
-                f"detected at {lemonade_url}"
-                if lemonade_ready
-                else f"start Lemonade Server manually; default URL is {lemonade_url}"
-            ),
-            "profile": "amd-lemonade",
+            "compatibility": lemonade_compatibility,
+            "notes": lemonade_notes,
+            "profile": "amd-lemonade-npu",
             "runtime_device": "npu",
             "runtime_asr_backend": "lemonade",
-        }
-    )
-
-    # Vulkan
-    vulkan_compat = "detected, not yet validated" if diag.gpu.vulkan_devices else "not detected"
-    vulkan_notes = ""
-    if not diag.gpu.vulkan_devices:
-        vulkan_notes = "Vulkan devices not found; requires Vulkan-capable GPU and driver"
-    options.append(
-        {
-            "name": "Vulkan acceleration",
-            "backend": "whisper.cpp Vulkan",
-            "model": "large-v3",
-            "memory": "~3.9 GB + runtime headroom",
-            "recommended_ram": ">= 8 GB",
-            "compatibility": vulkan_compat,
-            "notes": vulkan_notes,
-            "profile": "vulkan",
-            "runtime_device": "vulkan",
-            "runtime_asr_backend": "whisper_cpp",
-        }
-    )
-
-    # ROCm/HIP
-    rocm_compat = "detected" if diag.gpu.rocm_architectures else "unavailable in this environment"
-    rocm_notes = ""
-    if not diag.gpu.rocm_architectures:
-        rocm_notes = "rocminfo and a HIP-enabled whisper.cpp build were not found"
-    options.append(
-        {
-            "name": "AMD ROCm/HIP",
-            "backend": "whisper.cpp HIP/ROCm",
-            "model": "large-v3",
-            "memory": "~3.9 GB + runtime headroom",
-            "recommended_ram": ">= 8 GB",
-            "compatibility": rocm_compat,
-            "notes": rocm_notes,
-            "profile": "amd-rocm",
-            "runtime_device": "rocm",
-            "runtime_asr_backend": "whisper_cpp",
         }
     )
 

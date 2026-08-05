@@ -39,8 +39,14 @@ All notable changes to meeting-notes will be documented in this file.
   "no timing history yet" until a matching job has completed once.
 
 ### Changed
+- Lemonade Whisper acceleration now supports explicit Vulkan or NPU selection,
+  validates Lemonade's exact recipe backend instead of its generic `gpu` label,
+  and keeps local whisper.cpp CPU as the default baseline.
+- Removed Lemonade ROCm transcription choices, including the Qwen fallback;
+  Qwen transcription uses Vulkan while its forced aligner still requires the
+  separate project-local Python ROCm runtime.
 - Qwen Lemonade transcription now defaults to Vulkan on AMD, matching Lemonade
-  11.5.1 backend preference; explicit ROCm fallback remains configurable.
+  11.5.1 backend preference.
 - Qwen language selection now supports per-chunk automatic detection and all 11
   languages shared by Qwen3-ASR and its required timestamp aligner, with clear
   errors for ASR-only languages that cannot be aligned.

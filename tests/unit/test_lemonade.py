@@ -67,7 +67,28 @@ def test_get_configured_lemonade_backend() -> None:
     assert isinstance(configured.backend, LemonadeASRBackend)
     assert configured.runtime_identity["device"] == "npu"
     assert configured.runtime_identity["lemonade_model_id"] == "Whisper-Large-v3-Turbo"
+    assert configured.runtime_identity["whispercpp_backend"] == "npu"
     assert configured.transcribe_kwargs["model_path"] is None
+
+
+def test_get_configured_lemonade_vulkan_backend() -> None:
+    config = _config()
+    config.runtime.device = "vulkan"
+    configured = get_configured_backend(config)
+    assert isinstance(configured.backend, LemonadeASRBackend)
+    assert configured.backend.expected_device == "vulkan"
+    assert configured.runtime_identity["whispercpp_backend"] == "vulkan"
+
+
+def test_lemonade_rejects_rocm_and_preserves_local_cpu_baseline() -> None:
+    config = _config()
+    config.runtime.device = "rocm"
+    with pytest.raises(ValueError, match="npu, vulkan"):
+        get_configured_backend(config)
+
+    defaults = MeetingNotesConfig()
+    assert defaults.runtime.asr_backend == "whisper_cpp"
+    assert defaults.runtime.device == "cpu"
 
 
 def test_unreachable_server_has_manual_start_remediation() -> None:
@@ -102,6 +123,7 @@ def test_readiness_rejects_wrong_device() -> None:
                     "device": "cpu",
                     "status": "ready",
                     "backend_alive": True,
+                    "recipe_options": {"whispercpp_backend": "npu"},
                 },
                 {"version": "11.5.0"},
             ),
@@ -109,7 +131,66 @@ def test_readiness_rejects_wrong_device() -> None:
     ):
         readiness = backend.check_readiness(expected_device="npu")
     assert not readiness.available
-    assert "expected ready on npu" in readiness.detail
+    assert "expected ready with whisper.cpp npu" in readiness.detail
+
+
+def test_vulkan_readiness_uses_exact_recipe_backend_not_generic_gpu() -> None:
+    backend = LemonadeASRBackend(expected_device="vulkan")
+    with (
+        patch.object(backend, "is_available", return_value=True),
+        patch.object(
+            backend,
+            "model_info",
+            return_value={
+                "id": backend.model_id,
+                "downloaded": True,
+                "size": 1.51,
+                "labels": ["transcription"],
+            },
+        ),
+        patch.object(
+            backend,
+            "_loaded_model",
+            return_value=(
+                {
+                    "model_name": backend.model_id,
+                    "device": "gpu",
+                    "status": "ready",
+                    "backend_alive": True,
+                    "recipe_options": {"whispercpp_backend": "vulkan"},
+                },
+                {"version": "11.5.1"},
+            ),
+        ),
+    ):
+        readiness = backend.check_readiness()
+    assert readiness.available
+    assert readiness.device == "vulkan"
+    assert readiness.metadata["reported_device"] == "gpu"
+    assert readiness.metadata["whispercpp_backend"] == "vulkan"
+
+
+def test_load_model_requests_selected_whispercpp_backend() -> None:
+    backend = LemonadeASRBackend(expected_device="vulkan")
+    not_loaded = ASRReadiness(
+        True,
+        "downloaded",
+        device="vulkan",
+        metadata={"loaded": False},
+    )
+    ready = ASRReadiness(
+        True,
+        "ready",
+        device="vulkan",
+        metadata={"loaded": True, "whispercpp_backend": "vulkan"},
+    )
+    with (
+        patch.object(backend, "model_info", return_value={"downloaded": True}),
+        patch.object(backend, "check_readiness", side_effect=[not_loaded, ready]),
+        patch.object(backend, "_post_json", return_value={}) as post,
+    ):
+        assert backend.load_model() == ready
+    assert post.call_args.args[1]["whispercpp_backend"] == "vulkan"
 
 
 def test_verbose_json_maps_to_timestamped_segments(
@@ -346,6 +427,18 @@ def test_wizard_backend_options_include_default_lemonade_url() -> None:
         options = _build_backend_options(SystemDiagnostics())
     lemonade = next(item for item in options if item["runtime_asr_backend"] == "lemonade")
     assert "http://127.0.0.1:13305" in lemonade["notes"]
+
+
+def test_wizard_offers_lemonade_vulkan_and_npu_but_not_rocm() -> None:
+    diagnostics = SystemDiagnostics()
+    diagnostics.gpu.vulkan_devices = [{"name": "AMD Radeon"}]
+    with patch.object(LemonadeASRBackend, "is_available", return_value=True):
+        options = _build_backend_options(diagnostics)
+    choices = {(item["runtime_asr_backend"], item["runtime_device"]) for item in options}
+    assert ("whisper_cpp", "cpu") in choices
+    assert ("lemonade", "vulkan") in choices
+    assert ("lemonade", "npu") in choices
+    assert not any(item["runtime_device"] == "rocm" for item in options)
 
 
 def test_lemonade_first_run_estimate_uses_npu_seed(tmp_path: Path) -> None:

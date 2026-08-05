@@ -190,26 +190,15 @@ def test_registry_resolves_gpu_only_qwen_backend(tmp_path: Path) -> None:
     assert configured.runtime_identity["llamacpp_backend"] == "vulkan"
 
 
-def test_registry_preserves_explicit_lemonade_rocm_fallback(tmp_path: Path) -> None:
-    runtime = tmp_path / "runtime"
-    config = MeetingNotesConfig(
-        project={"cache_dir": str(tmp_path / "cache")},
-        runtime={"asr_backend": "qwen3_asr_lemonade", "device": "rocm"},
-        asr={
-            "backend_options": {
-                "qwen3_asr_lemonade": {
-                    "llamacpp_backend": "rocm",
-                    "rocm_gpu_runtime_path": str(runtime),
+def test_config_rejects_lemonade_rocm_for_qwen() -> None:
+    with pytest.raises(ValueError, match="llamacpp_backend"):
+        MeetingNotesConfig(
+            asr={
+                "backend_options": {
+                    "qwen3_asr_lemonade": {"llamacpp_backend": "rocm"}
                 }
             }
-        },
-    )
-
-    configured = get_configured_backend(config)
-
-    assert configured.runtime_identity["llamacpp_backend"] == "rocm"
-    assert isinstance(configured.backend, Qwen3ASRLemonadeBackend)
-    assert configured.backend.llamacpp_backend == "rocm"
+        )
 
 
 def test_registry_rejects_cpu_for_lemonade_qwen() -> None:

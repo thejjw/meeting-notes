@@ -13,6 +13,9 @@ from meeting_notes.asr.base import ASRBackend, ASRReadiness, ASRResult, ASRSegme
 
 log = structlog.get_logger()
 
+LEMONADE_WHISPERCPP_BACKENDS = frozenset({"npu", "vulkan"})
+_REPORTED_DEVICE_BY_BACKEND = {"npu": "npu", "vulkan": "gpu"}
+
 if TYPE_CHECKING:
     from collections.abc import Callable
     from pathlib import Path
@@ -154,7 +157,17 @@ class LemonadeASRBackend(ASRBackend):
         allow_provision: bool = False,
     ) -> ASRReadiness:
         del model
-        required_device = expected_device or self.expected_device
+        required_backend = expected_device or self.expected_device
+        if required_backend not in LEMONADE_WHISPERCPP_BACKENDS:
+            return ASRReadiness(
+                available=False,
+                detail=(
+                    f"Unsupported Lemonade whisper.cpp backend '{required_backend}'. "
+                    "Choose 'npu' or 'vulkan'; use the local whisper_cpp backend for CPU."
+                ),
+                device=required_backend,
+                metadata={"base_url": self.base_url, "model_id": self.model_id},
+            )
         if not self.is_available():
             return ASRReadiness(
                 available=False,
@@ -162,7 +175,7 @@ class LemonadeASRBackend(ASRBackend):
                     f"Lemonade Server is not reachable at {self.base_url}. "
                     "Start Lemonade Server manually, then retry."
                 ),
-                device=required_device,
+                device=required_backend,
                 metadata={"base_url": self.base_url, "model_id": self.model_id},
             )
         try:
@@ -175,7 +188,7 @@ class LemonadeASRBackend(ASRBackend):
                         "in the server catalogue."
                     ),
                     version=self.get_version(),
-                    device=required_device,
+                    device=required_backend,
                     metadata={"base_url": self.base_url, "model_id": self.model_id},
                 )
             labels = info.get("labels")
@@ -184,7 +197,7 @@ class LemonadeASRBackend(ASRBackend):
                     available=False,
                     detail=f"Lemonade model '{self.model_id}' is not a transcription model.",
                     version=self.get_version(),
-                    device=required_device,
+                    device=required_backend,
                     metadata={"base_url": self.base_url, "model_id": self.model_id},
                 )
             downloaded = bool(info.get("downloaded"))
@@ -193,7 +206,7 @@ class LemonadeASRBackend(ASRBackend):
                     available=False,
                     detail=f"Lemonade model '{self.model_id}' is registered but not downloaded.",
                     version=self.get_version(),
-                    device=required_device,
+                    device=required_backend,
                     metadata={
                         "base_url": self.base_url,
                         "model_id": self.model_id,
@@ -210,7 +223,7 @@ class LemonadeASRBackend(ASRBackend):
                         "before transcription."
                     ),
                     version=str(health.get("version") or "unknown"),
-                    device=required_device,
+                    device=required_backend,
                     metadata={
                         "base_url": self.base_url,
                         "model_id": self.model_id,
@@ -220,31 +233,42 @@ class LemonadeASRBackend(ASRBackend):
                     },
                 )
             actual_device = str(loaded.get("device") or "")
+            recipe_options = loaded.get("recipe_options")
+            if not isinstance(recipe_options, dict):
+                recipe_options = {}
+            actual_backend = str(recipe_options.get("whispercpp_backend") or "")
+            expected_reported_device = _REPORTED_DEVICE_BY_BACKEND[required_backend]
             ready = (
                 bool(loaded.get("backend_alive", True))
                 and str(loaded.get("status")) in {"ready", "in_use"}
-                and (not required_device or required_device in actual_device.split())
+                and actual_device == expected_reported_device
+                and actual_backend == required_backend
             )
             detail = (
-                f"Lemonade model '{self.model_id}' is ready on {actual_device or 'unknown device'}."
+                f"Lemonade model '{self.model_id}' is ready with whisper.cpp "
+                f"{actual_backend} ({actual_device})."
                 if ready
                 else (
-                    f"Lemonade model '{self.model_id}' is loaded on "
-                    f"{actual_device or 'an unknown device'} with status "
-                    f"'{loaded.get('status')}', expected ready on {required_device}."
+                    f"Lemonade model '{self.model_id}' is loaded with whisper.cpp "
+                    f"{actual_backend or 'unknown'} on {actual_device or 'an unknown device'} "
+                    f"with status '{loaded.get('status')}', expected ready with "
+                    f"whisper.cpp {required_backend}."
                 )
             )
             return ASRReadiness(
                 available=ready,
                 detail=detail,
                 version=str(health.get("version") or "unknown"),
-                device=actual_device,
+                device=actual_backend or required_backend,
                 metadata={
                     "base_url": self.base_url,
                     "model_id": self.model_id,
                     "downloaded": downloaded,
                     "loaded": True,
                     "status": loaded.get("status"),
+                    "reported_device": actual_device,
+                    "whispercpp_backend": actual_backend,
+                    "recipe_options": recipe_options,
                     "size_gb": info.get("size"),
                 },
             )
@@ -253,7 +277,7 @@ class LemonadeASRBackend(ASRBackend):
                 available=False,
                 detail=str(error),
                 version=self.get_version(),
-                device=required_device,
+                device=required_backend,
                 metadata={"base_url": self.base_url, "model_id": self.model_id},
             )
 
@@ -317,10 +341,7 @@ class LemonadeASRBackend(ASRBackend):
         while time.monotonic() < deadline:
             if readiness.available and readiness.metadata.get("loaded"):
                 return readiness
-            if (
-                readiness.metadata.get("loaded")
-                and self.expected_device not in readiness.device.split()
-            ):
+            if readiness.metadata.get("loaded"):
                 break
             time.sleep(0.5)
             readiness = self.check_readiness(expected_device=self.expected_device)

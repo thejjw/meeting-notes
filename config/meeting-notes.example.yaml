@@ -123,6 +123,8 @@ asr:
       extra_options: {}
     lemonade:
       # Standard Lemonade Server address; override only for a custom/remote server.
+      # Select whisper.cpp Vulkan or NPU with runtime.device when runtime.asr_backend
+      # is lemonade. Use whisper_cpp/cpu for the slow portable baseline.
       base_url: http://127.0.0.1:13305
       model_id: Whisper-Large-v3-Turbo
       api_key_env: LEMONADE_API_KEY
@@ -139,8 +141,8 @@ asr:
       model_id: Qwen3-ASR-1.7B-GGUF-Q8_0
       checkpoint: unslothai/Qwen3-ASR-1.7B-GGUF:Q8_0
       api_key_env: LEMONADE_API_KEY
-      # Vulkan is Lemonade 11.5.1's preferred AMD llama.cpp backend. ROCm is
-      # retained as an explicit fallback; CPU is intentionally unsupported.
+      # Vulkan is the only supported Lemonade llama.cpp backend for Qwen.
+      # CPU is intentionally unsupported; ROCm below refers only to alignment.
       llamacpp_backend: vulkan
       aligner_model_id: Qwen/Qwen3-ForcedAligner-0.6B-hf
       ctx_size: 8192

@@ -173,7 +173,17 @@ def get_configured_backend(config: MeetingNotesConfig) -> ConfiguredASRBackend:
         )
         backend = get_backend("whisper_cpp", executable=config.runtime.whisper_cpp_path)
     elif config.runtime.asr_backend == "lemonade":
-        from meeting_notes.asr.lemonade import LemonadeASRBackend
+        from meeting_notes.asr.lemonade import (
+            LEMONADE_WHISPERCPP_BACKENDS,
+            LemonadeASRBackend,
+        )
+
+        if config.runtime.device not in LEMONADE_WHISPERCPP_BACKENDS:
+            supported = ", ".join(sorted(LEMONADE_WHISPERCPP_BACKENDS))
+            raise ValueError(
+                "Lemonade Whisper acceleration requires runtime.device to be one of "
+                f"{supported}; use whisper_cpp/cpu for the CPU baseline."
+            )
 
         options = config.asr.backend_options.lemonade
         backend = LemonadeASRBackend(
@@ -190,6 +200,7 @@ def get_configured_backend(config: MeetingNotesConfig) -> ConfiguredASRBackend:
             {
                 "base_url": options.base_url,
                 "lemonade_model_id": options.model_id,
+                "whispercpp_backend": config.runtime.device,
             }
         )
     elif config.runtime.asr_backend == "faster_whisper":
